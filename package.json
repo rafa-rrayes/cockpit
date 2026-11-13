@@ -1,0 +1,57 @@
+{
+  "name": "cockpit",
+  "displayName": "Cockpit",
+  "description": "A live overview of the project and every Claude Code session, in place of the editor.",
+  "version": "0.1.0",
+  "publisher": "rrayes",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": { "vscode": "^1.100.0" },
+  "categories": ["Other"],
+  "main": "./dist/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      { "command": "cockpit.open", "title": "Cockpit: Open" },
+      { "command": "cockpit.refresh", "title": "Cockpit: Refresh" }
+    ],
+    "configuration": {
+      "title": "Cockpit",
+      "properties": {
+        "cockpit.openOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open Cockpit in the editor area when a window starts."
+        },
+        "cockpit.endedSessionDays": {
+          "type": "number",
+          "default": 7,
+          "description": "How many days of ended Claude sessions to show."
+        },
+        "cockpit.githubPollSeconds": {
+          "type": "number",
+          "default": 60,
+          "description": "How often to ask GitHub (through gh) for pull requests and CI runs while Cockpit is visible."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p webview",
+    "test": "vitest run",
+    "smoke": "node test/smoke/run.mjs",
+    "package": "npm run build && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "~1.100.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.28.0",
+    "preact": "^11.2.0",
+    "typescript": "^7.0.0",
+    "vitest": "^5.1.0"
+  }
+}
