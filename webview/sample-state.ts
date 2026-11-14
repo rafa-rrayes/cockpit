@@ -1,5 +1,6 @@
 // An invented State for the browser preview (dev.html): three projects, sessions in every status, a busy board.
 // The shapes match what the host sends; every name, path, prompt and id is made up.
+import { parseRoadmap } from '../src/data/roadmap';
 import type { ActivityEvent, ActivityKind, ClaudeSession, State, Subagent, WorkItem } from '../src/model';
 
 const MIN = 60_000;
@@ -14,6 +15,35 @@ const GH = 'https://github.com/example-org/harbor';
 
 const transcript = (project: string, id: string): string =>
   `/Users/dev/.claude/projects/${project.replace(/[/.]/g, '-')}/${id}.jsonl`;
+
+/** The ROADMAP.md of the sample project: the preview's board edits this text. */
+export const sampleRoadmap = `# Roadmap
+
+What ships next, release by release.
+
+## 1.5.0 — Checkout
+Target: week of 2026-11-23
+Status: in progress
+
+- [x] Order summary visible on small phones
+- [x] Round prices consistently
+- [x] Seller badges on the profile
+- [~] Payment step on its own screen
+- [ ] Daily push digest
+
+## 1.6.0 — Offline drafts
+Target: December
+
+- [~] Keep the last ten drafts offline
+- [ ] Sync drafts when the connection returns
+- [ ] Cache product pages at the edge
+- [ ] Shorter onboarding copy
+
+## Backlog
+
+- [ ] Tablet layout
+- [ ] Export orders as a spreadsheet
+`;
 
 export function sampleState(now = Date.now()): State {
   const ago = (ms: number): number => now - ms;
@@ -434,33 +464,9 @@ export function sampleState(now = Date.now()): State {
       latestTag: 'v1.4.0',
       latestTagAt: ago(3 * DAY),
       commitsSinceTag: 23,
-      roadmap: [
-        {
-          version: '1.5.0',
-          title: 'Checkout',
-          target: 'week of 2026-11-23',
-          status: 'in progress',
-          items: [
-            { text: 'Payment step on its own screen', done: false },
-            { text: 'Order summary visible on small phones', done: true },
-            { text: 'Round prices consistently', done: true },
-            { text: 'Seller badges on the profile', done: true },
-            { text: 'Daily push digest', done: false },
-          ],
-        },
-        {
-          version: '1.6.0',
-          title: 'Offline drafts',
-          target: 'December',
-          status: 'planned',
-          items: [
-            { text: 'Keep the last ten drafts offline', done: false },
-            { text: 'Sync drafts when the connection returns', done: false },
-            { text: 'Cache product pages at the edge', done: false },
-            { text: 'Shorter onboarding copy', done: false },
-          ],
-        },
-      ],
+      roadmapPath: `${HARBOR}/ROADMAP.md`,
+      roadmapExists: true,
+      roadmap: parseRoadmap(sampleRoadmap),
       changelog: [
         {
           version: 'Unreleased',

@@ -2,16 +2,7 @@
 //
 // House format (both files are read tolerantly: anything else is skipped, never an error):
 //
-// ROADMAP.md
-//   ## 1.2.0 — Comunidade             a release: version (optional "v" or [brackets]), "—", "-" or ":", an optional title
-//   Target: week of 2026-11-16        optional, free text
-//   Status: in progress               optional, free text ("planned", "in progress", "shipped")
-//   - [ ] Seasons                     not done
-//   - [x] Video feed                  done
-//   - Comments                        a plain item counts as not done
-//   Headings that do not start with a version ("## Later", "## 1. Foundations": a version has a dot or a "v")
-//   are skipped with their items. Lines inside ``` or ~~~ code fences are skipped in both files. "*" and "+" bullets,
-//   nested items and "### sub-headings" inside a release are accepted (the sub-heading itself is skipped).
+// ROADMAP.md: see roadmap.ts.
 //
 // CHANGELOG.md
 //   ## Unreleased                     also "## [Unreleased]"
@@ -21,17 +12,16 @@
 //   Kept in file order (newest first by convention), Unreleased moved to the top, at most 5 entries.
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { ChangelogEntry, ReleasePlan, Releases } from '../model';
+import type { ChangelogEntry, Releases } from '../model';
 import { defaultRefs, runGit as git } from './git';
+import { parseRoadmap, VERSION } from './roadmap';
+
+export { parseRoadmap };
 
 // ───────────────────────────── Pure parsers ─────────────────────────────
 
-// "1.2", "1.2.0-rc.1", "v2"; not a bare number, which is how numbered section headings start.
-const VERSION = String.raw`(?:v(?=\d)|(?=\d+\.\d))(\d+(?:\.\d+)*(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)`;
-const ROADMAP_HEADING = new RegExp(String.raw`^\[?${VERSION}\]?\s*(?:[—–:-]\s*)?(.*)$`);
 const CHANGELOG_HEADING = new RegExp(String.raw`^\[?${VERSION}\]?\s*(.*)$`);
 const LIST_ITEM = /^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$/;
-const CHECKBOX = /^\[([ xX])\]\s*(.*)$/;
 
 /** Lines outside fenced code blocks: a fence closes with the same character, at least as many times. */
 function* outsideFences(text: string): Generator<string> {
@@ -48,40 +38,6 @@ function* outsideFences(text: string): Generator<string> {
     }
     yield line;
   }
-}
-
-/** Strips bold/italic markers around a "Key:" label: "**Target:** x" → "Target: x". */
-const unwrapLabel = (line: string) => line.replace(/^([*_]{1,2})(\w+:)\1/, '$2').replace(/^([*_]{1,2})(\w+)\1:/, '$2:');
-
-export function parseRoadmap(text: string): ReleasePlan[] {
-  const out: ReleasePlan[] = [];
-  let cur: ReleasePlan | undefined;
-  for (const raw of outsideFences(text)) {
-    const h2 = /^##(?!#)\s*(.*?)\s*#*\s*$/.exec(raw);
-    if (h2) {
-      const m = ROADMAP_HEADING.exec(h2[1] ?? '');
-      cur = m?.[1] ? { version: m[1], items: [] } : undefined;
-      if (cur && m?.[2]?.trim()) cur.title = m[2].trim();
-      if (cur) out.push(cur);
-      continue;
-    }
-    if (!cur || /^#/.test(raw)) continue;
-    const item = LIST_ITEM.exec(raw);
-    if (item) {
-      const body = (item[2] ?? '').trim();
-      const box = CHECKBOX.exec(body);
-      const text = (box ? box[2] ?? '' : body).trim();
-      if (text) cur.items.push({ text, done: box ? box[1] !== ' ' : false });
-      continue;
-    }
-    const field = /^(target|status)\s*:\s*(.+)$/i.exec(unwrapLabel(raw.trim()));
-    if (field?.[1] && field[2]) {
-      const value = field[2].trim();
-      if (field[1].toLowerCase() === 'target') cur.target ??= value;
-      else cur.status ??= value;
-    }
-  }
-  return out;
 }
 
 export function parseChangelog(text: string, limit = 5): ChangelogEntry[] {
@@ -199,6 +155,8 @@ export async function readReleases(dir: string, repoRoot = dir): Promise<Release
 
   const out: Releases = {
     available: false,
+    roadmapPath: join(dir, 'ROADMAP.md'),
+    roadmapExists: roadmapText !== undefined,
     roadmap: roadmapText ? parseRoadmap(roadmapText) : [],
     changelog: changelogText ? parseChangelog(changelogText) : [],
   };

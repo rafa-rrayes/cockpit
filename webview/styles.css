@@ -413,6 +413,148 @@ button.needs-item:hover { background: color-mix(in srgb, var(--tone) 12%, var(--
 
 .ago { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
+/* ───────────── Roadmap ───────────── */
+
+.rm { display: grid; gap: 12px; }
+.rm-none { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.rm-lane {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface) 50%, transparent);
+}
+.rm-backlog { border-style: dashed; }
+.rm-lane-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: 24px; margin-bottom: 8px; }
+.rm-lane-head h3 { display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: 1.1em; font-weight: 600; }
+.rm-lane-title { font-weight: 600; }
+.rm-lane-head .muted { font-size: 12px; }
+.rm-lane-progress { display: flex; flex: 1; align-items: center; justify-content: flex-end; gap: 8px; min-width: 120px; }
+.rm-lane-progress .progress { flex: 0 1 120px; }
+.rm-lane-count { flex: 1; text-align: right; }
+
+.rm-cells { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-items: stretch; }
+.rm-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  min-height: 64px;
+  padding: 6px;
+  border: 1px dashed transparent;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.rm-over { border-color: var(--focus); background: color-mix(in srgb, var(--focus) 10%, transparent); }
+.rm-cell-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.rm-cards { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.rm-card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  padding: 6px 4px 6px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  cursor: grab;
+}
+.rm-card:hover { border-color: color-mix(in srgb, var(--fg) 25%, var(--border)); border-left-color: var(--muted); }
+.rm-card.rm-doing, .rm-card.rm-doing:hover { border-left-color: var(--info); }
+.rm-card.rm-done, .rm-card.rm-done:hover { border-left-color: var(--ok); }
+.rm-done .rm-text { color: var(--muted); }
+.rm-dragging { opacity: 0.4; }
+/* Where the dragged card would land: a line above the card under the pointer. */
+.rm-drop-before::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  right: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--focus);
+}
+.rm-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.rm-menu-button { flex: none; margin: -2px 0; border-radius: var(--radius-small); cursor: pointer; opacity: 0; }
+.rm-card:hover .rm-menu-button, .rm-menu-button:focus-visible, .rm-menu-button[aria-expanded='true'] { opacity: 1; }
+.rm-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% - 2px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  max-width: 280px;
+  padding: 4px;
+  border: 1px solid var(--vscode-menu-border, var(--border));
+  border-radius: var(--radius);
+  background: var(--vscode-menu-background, var(--surface));
+  color: var(--vscode-menu-foreground, var(--fg));
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+  cursor: default;
+}
+.rm-menu button {
+  padding: 3px 10px;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rm-menu button:hover, .rm-menu button:focus-visible {
+  background: var(--vscode-menu-selectionBackground, var(--hover));
+  color: var(--vscode-menu-selectionForeground, var(--fg));
+  outline: none;
+}
+.rm-menu hr { width: 100%; margin: 4px 0; border: 0; border-top: 1px solid var(--vscode-menu-separatorBackground, var(--border)); }
+.rm-menu .rm-danger { color: var(--fail); }
+.rm-add {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.rm-add:hover { background: var(--tool-hover); color: var(--fg); }
+.rm-input {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--vscode-input-border, var(--border));
+  border-radius: var(--radius-small);
+  background: var(--vscode-input-background, #313131);
+  color: var(--vscode-input-foreground, var(--fg));
+  font: inherit;
+}
+.rm-input:focus { border-color: var(--focus); outline: none; }
+.rm-release-form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 10px; }
+.rm-release-form .rm-input { flex: 1 1 160px; width: auto; }
+.rm-release-form .rm-version-input { flex: 0 0 90px; }
+
 /* ───────────── Work ───────────── */
 
 .board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: start; }
@@ -539,7 +681,7 @@ button.needs-item:hover { background: color-mix(in srgb, var(--tone) 12%, var(--
 .release-value { display: inline-flex; align-items: center; gap: 6px; font-size: 1.3em; font-weight: 600; }
 .release-value .icon { color: var(--muted); }
 .release-fact .muted { font-size: 12px; }
-.release-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 24px; align-items: start; }
+.release-grid { max-width: 80ch; }
 .changes { margin: 0; padding-left: 18px; }
 .changes li { margin: 2px 0; }
 .earlier { margin-top: 12px; color: var(--muted); }
@@ -547,22 +689,9 @@ button.needs-item:hover { background: color-mix(in srgb, var(--tone) 12%, var(--
 .earlier-entry h4 { margin: 10px 0 4px; color: var(--fg); font-size: 1em; font-weight: 600; }
 .earlier .changes { color: var(--fg); opacity: 0.85; }
 
-.plans { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--gap); margin: 0; padding: 0; list-style: none; }
-.plan { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
-.plan-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
-.plan-version { font-size: 1.1em; font-weight: 600; }
-.plan-title { flex: 1; font-weight: 600; }
-.plan-target { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
-.progress-row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
-.progress { flex: 1; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--fg) 14%, transparent); overflow: hidden; }
-.progress-fill { height: 100%; background: var(--vscode-progressBar-background, #0078d4); }
+.progress { display: block; flex: 1; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--fg) 14%, transparent); overflow: hidden; }
+.progress-fill { display: block; height: 100%; background: var(--vscode-progressBar-background, #0078d4); }
 .progress-text { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.plan-items { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; }
-.plan-item { display: flex; align-items: flex-start; gap: 8px; }
-.plan-check { display: inline-flex; flex: none; width: 14px; height: 18px; align-items: center; justify-content: center; }
-.plan-check .icon { color: var(--ok); }
-.plan-open { width: 10px; height: 10px; border: 1px solid var(--muted); border-radius: 2px; }
-.plan-done > span:last-child { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
 
 /* ───────────── Activity ───────────── */
 
@@ -735,3 +864,8 @@ body.vscode-high-contrast .needs-item { border-color: var(--vscode-contrastBorde
 body.vscode-high-contrast .card:hover,
 body.vscode-high-contrast .ci-row:hover,
 body.vscode-high-contrast button.act-row:hover { outline: 1px dashed var(--vscode-contrastActiveBorder, currentColor); outline-offset: -1px; }
+
+@media (max-width: 480px) {
+  .rm-cells { grid-template-columns: minmax(0, 1fr); }
+  .rm-cell { min-height: 0; }
+}

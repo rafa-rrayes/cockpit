@@ -1,11 +1,13 @@
 // Every message the webview can post, handled here. The webview is treated as untrusted input: each message is
 // checked against the current State (known session ids, known paths, links it shows) before anything happens, and
-// nothing changes on disk except through cleanMerged, which lists what it would do and asks first.
+// nothing changes on disk except through cleanMerged, which lists what it would do and asks first, and through the
+// roadmap board, which edits ROADMAP.md and nothing else.
 import { existsSync, statSync } from 'node:fs';
 import * as vscode from 'vscode';
 import { removeMerged } from './clean';
+import { applyRoadmapEdit, parseRoadmap, starterRoadmap } from './data/roadmap';
 import { cleanCandidates, isSessionId, knownFolders, knownUrls, parseMessage } from './guards';
-import type { ClaudeSession, State, WorkItem } from './model';
+import type { ClaudeSession, RoadmapEdit, State, WorkItem } from './model';
 
 export interface ActionHost {
   state(): State | undefined;
@@ -18,6 +20,8 @@ export interface ActionHost {
   terminalFor(sessionId: string): vscode.Terminal | undefined;
   /** Sends the current State to the webview again. */
   resend(): void;
+  /** ROADMAP.md now reads `text`: show it at once, without waiting for the next git refresh. */
+  roadmapChanged(text: string): void;
 }
 
 /** Bigger transcripts are revealed in the OS file manager instead: the editor struggles with hundreds of MB. */
@@ -60,7 +64,75 @@ export async function handleMessage(raw: unknown, host: ActionHost): Promise<voi
     }
     case 'cleanMerged':
       return cleanMerged(host);
+    case 'roadmap': {
+      // One edit at a time: each reads the file the one before it wrote.
+      const run = roadmapQueue.then(() => editRoadmap(msg.edit, host));
+      roadmapQueue = run.catch(() => undefined);
+      return run;
+    }
+    case 'openRoadmap': {
+      const path = state?.releases.roadmapPath;
+      if (!path || !existsSync(path)) return refuse('There is no ROADMAP.md yet.');
+      await vscode.window.showTextDocument(vscode.Uri.file(path), { preview: false, viewColumn: vscode.ViewColumn.Beside });
+      return;
+    }
   }
+}
+
+let roadmapQueue: Promise<void> = Promise.resolve();
+
+async function editRoadmap(edit: RoadmapEdit, host: ActionHost): Promise<void> {
+  const releases = host.state()?.releases;
+  const path = releases?.roadmapPath;
+  if (!releases || !path) return refuse('Open a folder to keep a roadmap in.');
+  const uri = vscode.Uri.file(path);
+
+  if (edit.op === 'create') {
+    if (existsSync(path)) return host.refreshGit();
+    const text = starterRoadmap(releases.currentVersion);
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(text, 'utf8'));
+    host.roadmapChanged(text);
+    return;
+  }
+  if (!existsSync(path)) {
+    refuse('ROADMAP.md is gone.');
+    return host.refreshGit();
+  }
+
+  // Through the document, not the file: a ROADMAP.md open in an editor is edited as it stands there, and the
+  // change can be undone there.
+  const doc = await vscode.workspace.openTextDocument(uri);
+  if (edit.op === 'remove') {
+    const item = parseRoadmap(doc.getText())
+      .flatMap((lane) => lane.items)
+      .find((i) => i.id === edit.id);
+    const answer = item && (await vscode.window.showWarningMessage(`Delete "${item.text}" from the roadmap?`, { modal: true }, 'Delete'));
+    if (item && answer !== 'Delete') return;
+  }
+  const before = doc.getText();
+  const result = applyRoadmapEdit(before, edit);
+  if (!result.ok) {
+    refuse(result.error);
+    host.roadmapChanged(before);
+    return;
+  }
+  const after = result.text;
+  // Only the span that differs, so an editor showing the file keeps its cursor and scroll position.
+  let start = 0;
+  while (start < before.length && start < after.length && before[start] === after[start]) start++;
+  let endBefore = before.length;
+  let endAfter = after.length;
+  while (endBefore > start && endAfter > start && before[endBefore - 1] === after[endAfter - 1]) {
+    endBefore--;
+    endAfter--;
+  }
+  const change = new vscode.WorkspaceEdit();
+  change.replace(uri, new vscode.Range(doc.positionAt(start), doc.positionAt(endBefore)), after.slice(start, endAfter));
+  if (!(await vscode.workspace.applyEdit(change)) || !(await doc.save())) {
+    refuse('Could not write ROADMAP.md.');
+    return host.refreshGit();
+  }
+  host.roadmapChanged(doc.getText());
 }
 
 function refuse(message: string): void {

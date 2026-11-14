@@ -20,6 +20,8 @@ export interface CockpitTestApi {
   panelOpen(): boolean;
   webviewReady(): boolean;
   statesPosted(): number;
+  /** Handles `message` as if the webview had posted it. */
+  receive(message: unknown): Promise<void>;
 }
 
 function cockpitTabs(): vscode.Tab[] {
@@ -152,18 +154,7 @@ class CockpitPanel implements vscode.Disposable {
     panel.webview.html = html(panel.webview, this.extensionUri);
     const subs: vscode.Disposable[] = [
       panel.webview.onDidReceiveMessage((raw: unknown) =>
-        handleMessage(raw, {
-          state: () => this.store.state,
-          refresh: () => this.store.refresh(),
-          refreshLocal: () => this.store.refreshLocal(),
-          refreshGit: () => this.store.refreshGit(),
-          otherWindowFolders: () => this.windows.otherFolders(),
-          terminalFor: (id) => this.store.terminalFor(id),
-          resend: () => {
-            this.ready = true;
-            this.post();
-          },
-        }).catch((e: unknown) => void vscode.window.showErrorMessage(`Cockpit: ${e instanceof Error ? e.message : String(e)}`)),
+        this.receive(raw).catch((e: unknown) => void vscode.window.showErrorMessage(`Cockpit: ${e instanceof Error ? e.message : String(e)}`)),
       ),
       panel.onDidChangeViewState((e) => this.store.setVisible(e.webviewPanel.visible)),
     ];
@@ -175,6 +166,23 @@ class CockpitPanel implements vscode.Disposable {
       this.store.setVisible(false);
     });
     this.store.setVisible(panel.visible);
+  }
+
+  /** A message from the webview (the smoke test sends them through here too). */
+  receive(raw: unknown): Promise<void> {
+    return handleMessage(raw, {
+      state: () => this.store.state,
+      refresh: () => this.store.refresh(),
+      refreshLocal: () => this.store.refreshLocal(),
+      refreshGit: () => this.store.refreshGit(),
+      otherWindowFolders: () => this.windows.otherFolders(),
+      terminalFor: (id) => this.store.terminalFor(id),
+      roadmapChanged: (text) => this.store.setRoadmap(text),
+      resend: () => {
+        this.ready = true;
+        this.post();
+      },
+    });
   }
 
   private post(): void {
@@ -274,5 +282,6 @@ export function activate(context: vscode.ExtensionContext): CockpitTestApi {
     panelOpen: () => panel.isOpen,
     webviewReady: () => panel.isReady,
     statesPosted: () => panel.postedCount,
+    receive: (message) => panel.receive(message),
   };
 }

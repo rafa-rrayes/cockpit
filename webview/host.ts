@@ -1,7 +1,8 @@
 // The one place that talks to the extension host. Inside VS Code it wraps acquireVsCodeApi(); in a plain browser
 // (dev.html) it plays the host itself: actions go to an on-screen log and State comes from
 // window.__COCKPIT_DEV_STATE__, so the UI runs unchanged in both.
-import type { HostMessage, State, WebviewMessage } from '../src/model';
+import { applyRoadmapEdit, parseRoadmap, starterRoadmap } from '../src/data/roadmap';
+import type { HostMessage, RoadmapEdit, State, WebviewMessage } from '../src/model';
 
 interface VsCodeApi {
   postMessage(message: unknown): void;
@@ -12,6 +13,8 @@ interface VsCodeApi {
 declare global {
   interface Window {
     __COCKPIT_DEV_STATE__?: State;
+    /** Dev only: the ROADMAP.md the preview edits. */
+    __COCKPIT_DEV_ROADMAP__?: string;
   }
 }
 
@@ -58,6 +61,22 @@ function createHost(): Host {
     window.postMessage(message, '*');
   };
 
+  // Dev only: edits the preview's ROADMAP.md with the code the real host uses.
+  const devRoadmap = (edit: RoadmapEdit): void => {
+    const state = window.__COCKPIT_DEV_STATE__;
+    if (!state) return;
+    let text = window.__COCKPIT_DEV_ROADMAP__;
+    if (edit.op === 'create') text ??= starterRoadmap(state.releases.currentVersion);
+    else if (text !== undefined) {
+      const result = applyRoadmapEdit(text, edit);
+      if (result.ok) text = result.text;
+      else console.warn(result.error);
+    }
+    if (text === undefined) return;
+    window.__COCKPIT_DEV_ROADMAP__ = text;
+    window.__COCKPIT_DEV_STATE__ = { ...state, releases: { ...state.releases, available: true, roadmapExists: true, roadmap: parseRoadmap(text) } };
+  };
+
   return {
     isDev: api === undefined,
     post(message) {
@@ -67,7 +86,8 @@ function createHost(): Host {
       }
       log = [...log.slice(-7), { at: Date.now(), message }];
       for (const listener of logListeners) listener(log);
-      if (message.type === 'ready' || message.type === 'refresh') devAnswer();
+      if (message.type === 'roadmap') devRoadmap(message.edit);
+      if (message.type === 'ready' || message.type === 'refresh' || message.type === 'roadmap') devAnswer();
     },
     onState(listener) {
       stateListeners.add(listener);

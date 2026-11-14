@@ -9,6 +9,7 @@ import { basename, join } from 'node:path';
 import * as vscode from 'vscode';
 import { compose, type GithubResult } from './compose';
 import { runGit, projectRootOf } from './data/git';
+import { parseRoadmap } from './data/roadmap';
 import type { ClaudeSession, State } from './model';
 import { ancestorsOf, readProcessTable } from './procs';
 import { type GitSnapshot, loadClaude, loadGit, loadGithub } from './sources';
@@ -145,6 +146,7 @@ export class Store implements vscode.Disposable {
       vscode.window.onDidOpenTerminal(() => this.claudeSoon()),
       vscode.window.onDidCloseTerminal(() => this.claudeSoon()),
       vscode.workspace.onDidSaveTextDocument(() => this.gitSoon()),
+      ...this.watchRoadmap(),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('cockpit.endedSessionDays')) void this.claude.run();
         if (e.affectsConfiguration('cockpit.githubPollSeconds')) this.scheduleGithub();
@@ -177,6 +179,14 @@ export class Store implements vscode.Disposable {
   /** Git only (after a change made from Cockpit, such as removing worktrees). */
   refreshGit(): Promise<void> {
     return this.git.run();
+  }
+
+  /** ROADMAP.md was just written from the board: show its new content now. The refresh the save triggers follows. */
+  setRoadmap(text: string): void {
+    const snapshot = this.git.value;
+    if (!snapshot) return;
+    this.git.value = { ...snapshot, releases: { ...snapshot.releases, available: true, roadmapExists: true, roadmap: parseRoadmap(text) } };
+    this.emit();
   }
 
   /** The panel's visibility: git polling and GitHub run only while it is visible. */
@@ -251,6 +261,14 @@ export class Store implements vscode.Disposable {
   }
 
   // ───────────────────────────── Triggers ─────────────────────────────
+
+  /** A ROADMAP.md written from outside VS Code (a Claude in a terminal) reaches the board without waiting for the timer. */
+  private watchRoadmap(): vscode.Disposable[] {
+    const ws = this.opts.workspace;
+    if (!ws) return [];
+    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(ws.path), 'ROADMAP.md'));
+    return [watcher, watcher.onDidChange(() => this.gitSoon()), watcher.onDidCreate(() => this.gitSoon()), watcher.onDidDelete(() => this.gitSoon())];
+  }
 
   private watchClaudeSessions(): void {
     const dir = join(this.opts.claudeDir, 'sessions');

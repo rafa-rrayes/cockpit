@@ -20,12 +20,19 @@ Claude Code session on this machine:
   such as `node_modules` go with it), and deletes the branch with `git branch -D`, which is safe once verified and
   works for a branch merged on GitHub but not pulled yet. Squash-merged branches are left to you: git cannot
   confirm them. It reports what it kept and why.
-- **Releases**: the current version, the latest tag and the commits since it, the changelog's Unreleased lines,
-  and the roadmap.
+- **Roadmap**: a board you edit in place, with a lane for each planned release plus a Backlog, and the columns
+  Planned, In progress and Done. Drag a card sideways to change its status, or to another lane to move it to
+  another release. Each card's menu does the same without dragging, and also renames and deletes. **Add card**
+  sits under each lane's Planned column, and **Release** adds a lane. `ROADMAP.md` in the open folder is the
+  storage: every edit changes only its own lines in that file, through VS Code's editor, so undo works there and
+  the file stays one you (and any Claude) can edit by hand. With no `ROADMAP.md`, the section offers to create one.
+- **Releases**: the current version, the latest tag and the commits since it, and the changelog's Unreleased
+  lines.
 - **Activity**: commits, session starts and ends, CI runs and pull requests, newest first.
 
-Cockpit only reads. It changes nothing except through those buttons. Transcripts never leave the machine, and the
-only network calls are `gh` commands, made with your existing GitHub CLI login.
+Cockpit only reads, with two exceptions that happen only when you act: **Clean merged…**, and the roadmap board,
+which writes `ROADMAP.md` and nothing else. Transcripts never leave the machine, and the only network calls are
+`gh` commands, made with your existing GitHub CLI login.
 
 ## Build and install
 
@@ -34,9 +41,9 @@ only network calls are `gh` commands, made with your existing GitHub CLI login.
     npm test            # vitest: the data layer, compose, the action guards
     npm run build       # dist/extension.js, dist/webview.{js,css}, dist/dev.html, dist/dump-state.js
     npm run smoke       # starts a real VS Code (downloaded into .vscode-test/) with the extension
-    npm run package     # cockpit-0.1.0.vsix
+    npm run package     # cockpit-0.1.1.vsix
 
-Install it with `code --install-extension cockpit-0.1.0.vsix`, then reload the window. VS Code 1.100 or newer is
+Install it with `code --install-extension cockpit-0.1.1.vsix`, then reload the window. VS Code 1.100 or newer is
 required. `git` must be on the PATH. `gh` (logged in) is optional: without it, the PR and CI parts are left out and
 a short note says why.
 
@@ -50,8 +57,9 @@ a short note says why.
   to `none`, so the Welcome page doesn't open as well.
 - **Cockpit: Refresh** reads everything again. Otherwise it updates by itself:
   - Claude sessions: when `~/.claude/sessions` changes, and every 15 s (60 s while the tab is hidden).
-  - Git: when the repository's refs, HEAD or worktrees change, when you save a file, and every 15 s while the tab
-    is visible.
+  - Git, the roadmap and the changelog: when the repository's refs, HEAD or worktrees change, when you save a
+    file, when `ROADMAP.md` changes on disk (a Claude editing it in a terminal), and every 15 s. While the tab is
+    hidden these wait, and Cockpit catches up when it is shown again.
   - GitHub: every `cockpit.githubPollSeconds` while the tab is visible, never while it's hidden.
 - In a multi-root workspace, Cockpit shows the first folder.
 
@@ -86,17 +94,23 @@ come from the repository):
   `app/app.json`, `pyproject.toml`, `Cargo.toml`.
 - The latest tag is the newest `v*` tag.
 
-`ROADMAP.md`:
+`ROADMAP.md`, which the board reads and writes (`src/data/roadmap.ts`):
 
-    ## 1.2.0 — Comunidade          version (an optional "v" or [brackets]), "—", "-" or ":", an optional title
+    ## 1.2.0 — Comunidade          a release: version (an optional "v" or [brackets]), "—", "-" or ":", an optional title
     Target: week of 2026-11-16     optional, free text
     Status: in progress            optional, free text (planned, in progress, shipped)
-    - [ ] Seasons                  not done
-    - [x] Video feed               done
-    - Comments                     a plain item counts as not done
+    - [ ] Comments                 planned (a plain "- Comments" too)
+    - [~] Video feed               in progress (also "[/]" and "[-]")
+    - [x] Seasons                  done
 
-Headings that don't start with a version (`## Later`, or a numbered section such as `## 1. Foundations`: a
-version has a dot or a leading `v`) are skipped, and so is anything inside a code fence, in both files.
+    ## Backlog                     work not yet in a release (also "Later", "Unscheduled", "Someday", "Ideas")
+    - [ ] Tablet layout
+
+Other headings (`## Notes`, or a numbered section such as `## 1. Foundations`: a version has a dot or a leading
+`v`) are skipped with their items, and so is anything inside a code fence, in both files. The board leaves every
+line it doesn't edit exactly as it was. A release's title, target and status are edited in the file (**Open
+file**), and so is removing a release. If the file changed after the board last read it, so that an edit no
+longer finds its line, the edit is refused and the board reloads; it never guesses.
 
 `CHANGELOG.md` ([Keep a Changelog](https://keepachangelog.com) style):
 
@@ -111,7 +125,8 @@ Unreleased is shown first, then the newest four releases.
 
 - `src/model.ts` is the contract: the `State` the extension host sends to the webview, and the messages the
   webview sends back.
-- `src/data/*` are the adapters (Claude Code, git, GitHub, releases).
+- `src/data/*` are the adapters (Claude Code, git, GitHub, releases). `src/data/roadmap.ts` parses `ROADMAP.md`
+  and applies the board's edits to its text; it is pure, so the browser preview runs the same code.
 - `src/compose.ts` builds the State from them. It is pure and unit-tested.
 - `src/store.ts` runs the refresh loop.
 - `src/actions.ts` handles the webview's messages. The checks on them are in `src/guards.ts`.
@@ -125,5 +140,6 @@ To look at the UI with real data outside VS Code:
     cd dist && python3 -m http.server 8000                         # then open
     # http://127.0.0.1:8000/dev.html?state=state.json  (add &theme=light for the light theme)
 
-`dist/dev.html` with no `?state=` shows an invented sample State. `dist/state.json` contains your real prompts, so
+`dist/dev.html` with no `?state=` shows an invented sample State, with a roadmap board you can edit (the edits
+stay in the page). `dist/state.json` contains your real prompts, so
 delete it afterwards; `dist/` is not committed or packaged.

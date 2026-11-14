@@ -151,13 +151,37 @@ export interface Work {
 
 // ───────────────────────────── Releases ─────────────────────────────
 
+export type ItemStatus = 'todo' | 'doing' | 'done';
+
+/** One card of the roadmap board: a list item of ROADMAP.md. */
+export interface RoadmapItem {
+  /** "<line>:<hash of the line>": where the item was when the file was read. An edit names its item by id, and
+   *  is refused when the file no longer has that line. */
+  id: string;
+  text: string;
+  status: ItemStatus; // "- [ ]" todo, "- [~]" doing, "- [x]" done
+}
+
+/** One lane of the board: a planned release, or the backlog (work not yet in a release). */
 export interface ReleasePlan {
-  version: string; // "1.2.0"
+  /** "1.2.0"; for the backlog, its heading as written ("Backlog"). Names the lane in edits. */
+  version: string;
+  backlog?: boolean;
   title?: string; // "Comunidade"
   target?: string; // free text as written in ROADMAP.md: "week of 2026-11-16"
   status?: string; // free text: "planned", "in progress", "shipped"
-  items: { text: string; done: boolean }[];
+  items: RoadmapItem[];
 }
+
+/** What the board can change in ROADMAP.md. `lane` is a ReleasePlan.version; "Backlog" is created when missing. */
+export type RoadmapEdit =
+  | { op: 'create' } // write a starter ROADMAP.md when there is none
+  | { op: 'add'; lane: string; text: string }
+  | { op: 'setText'; id: string; text: string }
+  | { op: 'setStatus'; id: string; status: ItemStatus } // in place
+  | { op: 'move'; id: string; lane: string; status: ItemStatus; before?: string } // before: an item id of that lane; absent: the lane's end
+  | { op: 'remove'; id: string }
+  | { op: 'addRelease'; version: string; title?: string };
 
 export interface ChangelogEntry {
   version: string; // "Unreleased" or "1.2.0"
@@ -174,6 +198,10 @@ export interface Releases {
   latestTag?: string;
   latestTagAt?: number;
   commitsSinceTag?: number;
+  /** Where ROADMAP.md is, or would be created: set whenever a folder is open. */
+  roadmapPath?: string;
+  roadmapExists?: boolean;
+  /** Lanes in file order. */
   roadmap: ReleasePlan[];
   /** Unreleased first, then newest versions, at most 5. */
   changelog: ChangelogEntry[];
@@ -245,4 +273,6 @@ export type WebviewMessage =
   | { type: 'openFolder'; path: string; newWindow: boolean }
   | { type: 'openUrl'; url: string }
   | { type: 'copy'; text: string }
-  | { type: 'cleanMerged' }; // the host lists what it would delete and asks before deleting anything
+  | { type: 'cleanMerged' } // the host lists what it would delete and asks before deleting anything
+  | { type: 'roadmap'; edit: RoadmapEdit } // edits ROADMAP.md; removing an item asks first
+  | { type: 'openRoadmap' }; // ROADMAP.md in the editor

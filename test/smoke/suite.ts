@@ -1,7 +1,9 @@
 // Runs inside the VS Code that run.mjs starts. The extension's activate() returns a small test API.
 import * as assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'node:fs';
 import * as vscode from 'vscode';
 import type { CockpitTestApi } from '../../src/extension';
+import type { RoadmapEdit } from '../../src/model';
 
 async function waitFor(what: string, check: () => boolean, timeoutMs = 30_000): Promise<void> {
   const until = Date.now() + timeoutMs;
@@ -53,6 +55,52 @@ export async function run(): Promise<void> {
   assert.equal(state.releases.changelog[0]?.version, 'Unreleased');
   assert.ok(Object.keys(state.sessions).length > 0, 'sessions read from CLAUDE_CONFIG_DIR');
   assert.equal(state.projects[0]?.isWorkspace, true, 'the workspace project comes first');
+
+  // The roadmap board: every edit goes through the same handler as a webview message, and lands in ROADMAP.md.
+  const roadmapFile = state.releases.roadmapPath ?? '';
+  const onDisk = () => readFileSync(roadmapFile, 'utf8');
+  const lanes = () => api.state()?.releases.roadmap ?? [];
+  const card = (text: string) => lanes().flatMap((l) => l.items).find((i) => i.text === text);
+  const edit = (e: RoadmapEdit) => api.receive({ type: 'roadmap', edit: e });
+  assert.ok(roadmapFile.endsWith('/shop/ROADMAP.md'), 'the roadmap lives at the top of the worktree');
+  assert.equal(state.releases.roadmapExists, false);
+  assert.ok(!existsSync(roadmapFile));
+
+  await edit({ op: 'create' });
+  assert.equal(onDisk(), '# Roadmap\n\n## 0.4.0\n\n## Backlog\n', 'the starter plans the next minor version');
+  assert.deepEqual(lanes().map((l) => l.version), ['0.4.0', 'Backlog']);
+
+  await edit({ op: 'add', lane: '0.4.0', text: 'Gift cards' });
+  await edit({ op: 'add', lane: '0.4.0', text: 'Wish lists' });
+  assert.equal(onDisk(), '# Roadmap\n\n## 0.4.0\n\n- [ ] Gift cards\n- [ ] Wish lists\n\n## Backlog\n');
+  assert.equal(card('Gift cards')?.status, 'todo', 'the board shows the new card without waiting for a refresh');
+
+  await edit({ op: 'setStatus', id: card('Wish lists')?.id ?? '', status: 'doing' });
+  await edit({ op: 'setText', id: card('Gift cards')?.id ?? '', text: 'Gift cards at checkout' });
+  const beforeMove = onDisk();
+  assert.equal(beforeMove, '# Roadmap\n\n## 0.4.0\n\n- [ ] Gift cards at checkout\n- [~] Wish lists\n\n## Backlog\n');
+
+  await edit({ op: 'move', id: card('Gift cards at checkout')?.id ?? '', lane: 'Backlog', status: 'done' });
+  const afterMove = onDisk();
+  assert.equal(afterMove, '# Roadmap\n\n## 0.4.0\n\n- [~] Wish lists\n\n## Backlog\n\n- [x] Gift cards at checkout\n');
+  assert.equal(lanes()[1]?.items[0]?.status, 'done');
+
+  await edit({ op: 'addRelease', version: '0.5.0', title: 'Loyalty' });
+  assert.match(onDisk(), /- \[~\] Wish lists\n\n## 0\.5\.0 — Loyalty\n\n## Backlog\n/);
+
+  // An id from before the file changed is refused, and nothing is written.
+  const current = onDisk();
+  await edit({ op: 'setStatus', id: '5:nosuchline', status: 'done' });
+  assert.equal(onDisk(), current, 'a stale edit changes nothing');
+
+  // The edits are ordinary editor edits: undo in ROADMAP.md takes the last one back.
+  const editor = await vscode.window.showTextDocument(vscode.Uri.file(roadmapFile), { preview: false });
+  await vscode.commands.executeCommand('undo');
+  assert.equal(editor.document.getText(), afterMove, 'undo takes back the last board edit');
+  await vscode.commands.executeCommand('workbench.action.files.save');
+  // Cockpit was hidden behind the editor; it catches up when it is shown again.
+  await vscode.commands.executeCommand('cockpit.open');
+  await waitFor('the board follows a change made in the editor', () => lanes().length === 2, 10_000);
 
   // The webview script ran under the Content-Security-Policy (it posted "ready") and received the State.
   await waitFor('the webview loaded and got a State', () => api.webviewReady() && api.statesPosted() > 0);

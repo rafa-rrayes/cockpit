@@ -25,6 +25,7 @@ export function Header(): JSX.Element {
   const nav: { id: string; label: string; show: boolean; badge?: number }[] = [
     { id: 'needs', label: 'Needs you', show: state.attention.length > 0, badge: state.attention.length },
     { id: 'claudes', label: 'Claudes', show: true },
+    { id: 'roadmap', label: 'Roadmap', show: Boolean(state.releases.roadmapPath) },
     { id: 'work', label: 'Work', show: state.work.available },
     { id: 'releases', label: 'Releases', show: state.releases.available },
     { id: 'activity', label: 'Activity', show: true },

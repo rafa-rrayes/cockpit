@@ -12,6 +12,7 @@ import { Detail } from './sections/Detail';
 import { Header } from './sections/Header';
 import { NeedsYou } from './sections/NeedsYou';
 import { Releases } from './sections/Releases';
+import { Roadmap } from './sections/Roadmap';
 import { Work } from './sections/Work';
 
 const defaultUi: UiState = { filter: 'all', showEnded: false, open: {}, expanded: {} };
@@ -101,6 +102,7 @@ export function App(): JSX.Element {
           <main class="sections">
             <NeedsYou />
             <Claudes />
+            {cockpit.state.releases.roadmapPath && <Roadmap />}
             {cockpit.state.work.available && <Work />}
             {cockpit.state.releases.available && <Releases />}
             <Activity />

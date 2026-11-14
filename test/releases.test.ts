@@ -10,7 +10,8 @@ const dir = join(__dirname, 'fixtures/releases');
 const fixture = (name: string) => readFileSync(join(dir, name), 'utf8');
 
 describe('parseRoadmap', () => {
-  const plans = parseRoadmap(fixture('ROADMAP.md'));
+  // The backlog lane ("## Later") has its own tests in roadmap.test.ts.
+  const plans = parseRoadmap(fixture('ROADMAP.md')).filter((p) => !p.backlog);
 
   it('reads each release heading, all three separators and an optional v or brackets', () => {
     expect(plans.map((p) => [p.version, p.title])).toEqual([
@@ -22,28 +23,28 @@ describe('parseRoadmap', () => {
   });
 
   it('reads target, status (also in bold) and the items', () => {
-    expect(plans[0]).toEqual({
+    expect(plans[0]).toMatchObject({
       version: '1.2.0',
       title: 'Community',
       target: 'week of 2026-11-16',
       status: 'in progress',
       items: [
-        { text: 'Seasons and a leaderboard', done: true },
-        { text: 'Video feed', done: false },
-        { text: 'Upload from the app', done: true },
-        { text: 'Comments on posts', done: false },
-        { text: 'Moderation tools', done: false },
+        { text: 'Seasons and a leaderboard', status: 'done' },
+        { text: 'Video feed', status: 'todo' },
+        { text: 'Upload from the app', status: 'done' },
+        { text: 'Comments on posts', status: 'todo' },
+        { text: 'Moderation tools', status: 'todo' },
       ],
     });
-    expect(plans[1]).toMatchObject({ target: 'December', status: 'planned', items: [{ text: 'Card checkout in USD', done: false }, { text: 'Payouts', done: false }] });
+    expect(plans[1]).toMatchObject({ target: 'December', status: 'planned', items: [{ text: 'Card checkout in USD', status: 'todo' }, { text: 'Payouts', status: 'todo' }] });
     expect(plans[2]?.items).toEqual([]);
-    expect(plans[3]).toMatchObject({ status: 'planned', items: [{ text: 'Numbered items work too', done: false }] });
+    expect(plans[3]).toMatchObject({ status: 'planned', items: [{ text: 'Numbered items work too', status: 'todo' }] });
   });
 
   it('skips numbered section headings and anything inside code fences', () => {
     expect(parseRoadmap('## 1. Foundations\n- a\n## 2) Later\n- b\n')).toEqual([]);
-    expect(parseRoadmap('## v2 — Big\n```md\n## 9.9.9 fake\n- [ ] not an item\n```\n- [x] real\n~~~\n## 8.8 fake\n~~~\n')).toEqual([
-      { version: '2', title: 'Big', items: [{ text: 'real', done: true }] },
+    expect(parseRoadmap('## v2 — Big\n```md\n## 9.9.9 fake\n- [ ] not an item\n```\n- [x] real\n~~~\n## 8.8 fake\n~~~\n')).toMatchObject([
+      { version: '2', title: 'Big', items: [{ text: 'real', status: 'done' }] },
     ]);
     expect(parseChangelog('## 1.0.0\n- kept\n````\n```\n## 9.9.9\n- example\n````\n- also kept\n')).toEqual([{ version: '1.0.0', lines: ['kept', 'also kept'] }]);
   });
@@ -141,7 +142,7 @@ describe('readReleases on a real repository', () => {
     const r = await readReleases(repo);
     expect(r).toMatchObject({ available: true, currentVersion: '1.1.0', versionSource: 'app/app.json', latestTag: 'v0.10.0', commitsSinceTag: 2 });
     expect(r.latestTagAt).toBeGreaterThan(0);
-    expect(r.roadmap).toHaveLength(4);
+    expect(r.roadmap).toHaveLength(5);
     expect(r.changelog).toEqual([]);
   });
 
@@ -165,8 +166,9 @@ describe('readReleases on a real repository', () => {
   it('is unavailable with nothing to show, and works outside git', async () => {
     const empty = join(base, 'empty');
     mkdirSync(empty);
-    expect(await readReleases(empty)).toEqual({ available: false, roadmap: [], changelog: [] });
+    const roadmapPath = join(empty, 'ROADMAP.md');
+    expect(await readReleases(empty)).toEqual({ available: false, roadmapPath, roadmapExists: false, roadmap: [], changelog: [] });
     writeFileSync(join(empty, 'CHANGELOG.md'), '# Changelog\n');
-    expect(await readReleases(empty)).toEqual({ available: true, roadmap: [], changelog: [] });
+    expect(await readReleases(empty)).toEqual({ available: true, roadmapPath, roadmapExists: false, roadmap: [], changelog: [] });
   });
 });

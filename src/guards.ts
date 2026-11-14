@@ -2,7 +2,7 @@
 // and what "Clean merged" may remove.
 import { isAbsolute } from 'node:path';
 import { isRunningAgentWorktree, runningAgentWorktrees } from './compose';
-import type { State, WebviewMessage, WorkItem } from './model';
+import type { ItemStatus, RoadmapEdit, State, WebviewMessage, WorkItem } from './model';
 
 // Claude Code session ids are UUIDs; anything else never reaches a shell command line.
 const SESSION_ID = /^[0-9A-Za-z][0-9A-Za-z-]{7,63}$/;
@@ -20,7 +20,12 @@ export function parseMessage(raw: unknown): WebviewMessage | undefined {
     case 'ready':
     case 'refresh':
     case 'cleanMerged':
+    case 'openRoadmap':
       return { type: raw.type };
+    case 'roadmap': {
+      const edit = parseRoadmapEdit(raw.edit);
+      return edit ? { type: 'roadmap', edit } : undefined;
+    }
     case 'resumeSession':
     case 'focusSession':
     case 'openTranscript': {
@@ -38,6 +43,46 @@ export function parseMessage(raw: unknown): WebviewMessage | undefined {
     case 'copy': {
       const text = str(raw.text);
       return text !== undefined ? { type: 'copy', text } : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
+const MAX_FIELD = 1000;
+const field = (v: unknown): string | undefined => (typeof v === 'string' && v.length <= MAX_FIELD ? v : undefined);
+const status = (v: unknown): ItemStatus | undefined => (v === 'todo' || v === 'doing' || v === 'done' ? v : undefined);
+
+/** A roadmap edit with every field of the right kind; what the fields name is checked against the file itself. */
+export function parseRoadmapEdit(raw: unknown): RoadmapEdit | undefined {
+  if (!isObj(raw)) return undefined;
+  const id = field(raw.id);
+  const lane = field(raw.lane);
+  const text = field(raw.text);
+  switch (raw.op) {
+    case 'create':
+      return { op: 'create' };
+    case 'add':
+      return lane !== undefined && text !== undefined ? { op: 'add', lane, text } : undefined;
+    case 'setText':
+      return id !== undefined && text !== undefined ? { op: 'setText', id, text } : undefined;
+    case 'setStatus': {
+      const s = status(raw.status);
+      return id !== undefined && s ? { op: 'setStatus', id, status: s } : undefined;
+    }
+    case 'move': {
+      const s = status(raw.status);
+      if (id === undefined || lane === undefined || !s) return undefined;
+      const before = field(raw.before);
+      return before === undefined ? { op: 'move', id, lane, status: s } : { op: 'move', id, lane, status: s, before };
+    }
+    case 'remove':
+      return id !== undefined ? { op: 'remove', id } : undefined;
+    case 'addRelease': {
+      const version = field(raw.version);
+      if (version === undefined) return undefined;
+      const title = field(raw.title);
+      return title === undefined ? { op: 'addRelease', version } : { op: 'addRelease', version, title };
     }
     default:
       return undefined;
