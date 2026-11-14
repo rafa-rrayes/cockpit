@@ -1,0 +1,89 @@
+// The one place that talks to the extension host. Inside VS Code it wraps acquireVsCodeApi(); in a plain browser
+// (dev.html) it plays the host itself: actions go to an on-screen log and State comes from
+// window.__COCKPIT_DEV_STATE__, so the UI runs unchanged in both.
+import type { HostMessage, State, WebviewMessage } from '../src/model';
+
+interface VsCodeApi {
+  postMessage(message: unknown): void;
+  getState(): unknown;
+  setState(state: unknown): void;
+}
+
+declare global {
+  interface Window {
+    __COCKPIT_DEV_STATE__?: State;
+  }
+}
+
+// VS Code defines this in the webview's global scope (not always as a window property), so it is read through
+// `typeof` on the bare name.
+declare const acquireVsCodeApi: (() => VsCodeApi) | undefined;
+
+export interface DevLogEntry {
+  at: number;
+  message: WebviewMessage;
+}
+
+export interface Host {
+  /** True in a plain browser: there is no extension host behind the page. */
+  readonly isDev: boolean;
+  post(message: WebviewMessage): void;
+  onState(listener: (state: State) => void): () => void;
+  getUiState(): unknown;
+  setUiState(state: unknown): void;
+  /** Dev only: the messages the page has posted, newest last. */
+  onDevLog(listener: (entries: DevLogEntry[]) => void): () => void;
+}
+
+const isHostMessage = (data: unknown): data is HostMessage =>
+  typeof data === 'object' && data !== null && (data as { type?: unknown }).type === 'state' && 'state' in data;
+
+function createHost(): Host {
+  const api = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : undefined;
+  const stateListeners = new Set<(state: State) => void>();
+  const logListeners = new Set<(entries: DevLogEntry[]) => void>();
+  let log: DevLogEntry[] = [];
+  let devUiState: unknown;
+
+  window.addEventListener('message', (event: MessageEvent<unknown>) => {
+    if (!isHostMessage(event.data)) return;
+    for (const listener of stateListeners) listener(event.data.state);
+  });
+
+  // Answers like the real host would, asynchronously, so the UI sees the same message flow.
+  const devAnswer = (): void => {
+    const state = window.__COCKPIT_DEV_STATE__;
+    if (!state) return;
+    const message: HostMessage = { type: 'state', state: { ...state, generatedAt: Date.now() } };
+    window.postMessage(message, '*');
+  };
+
+  return {
+    isDev: api === undefined,
+    post(message) {
+      if (api) {
+        api.postMessage(message);
+        return;
+      }
+      log = [...log.slice(-7), { at: Date.now(), message }];
+      for (const listener of logListeners) listener(log);
+      if (message.type === 'ready' || message.type === 'refresh') devAnswer();
+    },
+    onState(listener) {
+      stateListeners.add(listener);
+      return () => stateListeners.delete(listener);
+    },
+    getUiState: () => (api ? api.getState() : devUiState),
+    setUiState(state) {
+      if (api) api.setState(state);
+      else devUiState = state;
+    },
+    onDevLog(listener) {
+      logListeners.add(listener);
+      listener(log);
+      return () => logListeners.delete(listener);
+    },
+  };
+}
+
+export const host: Host = createHost();
