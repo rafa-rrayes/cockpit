@@ -89,17 +89,20 @@ export function buildProjects(sessions: ClaudeSession[], workspaceProjectKey?: s
 /** The work item a session belongs to: the worktree its cwd is in (the deepest one, because agent worktrees often
  *  live inside the main checkout). A session that only matches the main checkout belongs to the branch checked out
  *  there, unless its transcript names another branch: then it is that branch when the branch lost its worktree
- *  (removed by hand), and nothing otherwise (it ran on a branch that is gone, or before a checkout switched). */
+ *  (removed by hand), and nothing otherwise (it ran on a branch that is gone, or before a checkout switched).
+ *  A session whose folder is unknown belongs nowhere. */
 export function itemForSession(s: ClaudeSession, items: WorkItem[], repoRoot: string | undefined): WorkItem | undefined {
+  if (!s.cwd) return undefined;
   let best: WorkItem | undefined;
   for (const item of items) {
-    if (!item.worktreePath || !s.cwd || !within(s.cwd, item.worktreePath)) continue;
+    if (!item.worktreePath || !within(s.cwd, item.worktreePath)) continue;
     if (!best || (best.worktreePath?.length ?? 0) < item.worktreePath.length) best = item;
   }
   const main = repoRoot ? items.find((i) => i.worktreePath === repoRoot) : undefined;
   if (best && best !== main) return best;
-  // Reached the main checkout by path, or nothing by path but the session is of this project (a symlinked cwd).
-  if (!best && (!repoRoot || s.projectKey !== repoRoot)) return undefined;
+  // Inside the main checkout by path, or nothing by path (a symlinked cwd): only if the session is of this project,
+  // and not of another repository nested in the main checkout.
+  if (!repoRoot || s.projectKey !== repoRoot) return undefined;
   if (!s.gitBranch || s.gitBranch === main?.branch) return main;
   return items.find((i) => i.branch === s.gitBranch && !i.worktreePath);
 }
@@ -110,12 +113,27 @@ function prFor(branch: string, prs: PullRequest[]): PullRequest | undefined {
   return mine.find((p) => p.state === 'open') ?? [...mine].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))[0];
 }
 
+/** Worktree folder names (agent-<id>) of the subagents still running in live sessions: Claude Code isolates such
+ *  an agent in <root>/.claude/worktrees/agent-<id>, while the session's own cwd stays in the main checkout. */
+export function runningAgentWorktrees(sessions: ClaudeSession[]): Set<string> {
+  const out = new Set<string>();
+  for (const s of sessions) if (s.live) for (const a of s.subagents) if (!a.finished) out.add(`agent-${a.id}`);
+  return out;
+}
+
+/** The worktree is the isolation worktree of a running subagent. */
+export function isRunningAgentWorktree(item: WorkItem, running: Set<string>): boolean {
+  return item.worktreePath !== undefined && running.has(lastSegment(item.worktreePath));
+}
+
 /** Items with their PR and sessions, regrouped now that sessions are known:
- *  - stale with a live session is active (the contract's rule; readGit cannot see sessions);
+ *  - an item with a live session, or a running subagent's worktree, is active: a Claude is working there even
+ *    before its first edit (readGit cannot see sessions, so it calls a fresh clean branch merged or stale);
  *  - a clean branch whose PR was merged and that has no commit after the PR's last update is merged, though it is
  *    "ahead": a squash or rebase merge leaves the branch's own commits out of the default branch. */
 export function buildItems(git: GitResult, sessions: ClaudeSession[], prs: PullRequest[]): WorkItem[] {
   const items = git.items.map((i): WorkItem => ({ ...i, sessionIds: [] }));
+  const running = runningAgentWorktrees(sessions);
   const byItem = new Map<WorkItem, ClaudeSession[]>();
   for (const s of [...sessions].sort(byRecency)) {
     const item = itemForSession(s, items, git.repoRoot);
@@ -129,8 +147,8 @@ export function buildItems(git: GitResult, sessions: ClaudeSession[], prs: PullR
     item.sessionIds = own.map((s) => s.sessionId);
     const pr = prFor(item.branch, prs);
     if (pr && !item.isDefault) item.pr = pr;
-    const live = own.some((s) => s.live);
-    if (item.group === 'stale' && live) item.group = 'active';
+    const live = own.some((s) => s.live) || isRunningAgentWorktree(item, running);
+    if (live) item.group = 'active';
     const squashMerged =
       pr?.state === 'merged' &&
       item.ahead > 0 &&

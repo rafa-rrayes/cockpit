@@ -13,7 +13,13 @@ Claude Code session on this machine:
 - **Work**: branches and worktrees as a board (In progress, Merged, Stale) with uncommitted files, ahead/behind,
   the pull request and its checks, and the Claudes working there. Below that, the latest CI runs.
   **Clean merged…** lists the merged worktrees and branches it would remove and does nothing until you confirm.
-  It runs `git worktree remove` (never `--force`) and `git branch -d` (never `-D`), and reports what git refused.
+  It leaves out anything a live Claude or a running subagent works in, a locked worktree, and a folder open in
+  any VS Code window. After you confirm it checks again, then for each branch verifies with
+  `git merge-base --is-ancestor` that its commits are all in the default branch (local or `origin` copy), runs
+  `git worktree remove` (never `--force`, so a worktree with uncommitted or untracked files is kept; ignored files
+  such as `node_modules` go with it), and deletes the branch with `git branch -D`, which is safe once verified and
+  works for a branch merged on GitHub but not pulled yet. Squash-merged branches are left to you: git cannot
+  confirm them. It reports what it kept and why.
 - **Releases**: the current version, the latest tag and the commits since it, the changelog's Unreleased lines,
   and the roadmap.
 - **Activity**: commits, session starts and ends, CI runs and pull requests, newest first.
@@ -73,7 +79,8 @@ they never take `index.lock` while a Claude commits), `log`, `tag`.
 
 **GitHub**: `gh repo view`, `gh pr list`, `gh run list`.
 
-**Release files** in the repository root:
+**Release files** in the root of the folder that is open (a worktree's own files, when a worktree is open; tags
+come from the repository):
 
 - The version comes from the first file in this list that has one: `package.json`, `app.json` (`expo.version`),
   `app/app.json`, `pyproject.toml`, `Cargo.toml`.
@@ -88,7 +95,8 @@ they never take `index.lock` while a Claude commits), `log`, `tag`.
     - [x] Video feed               done
     - Comments                     a plain item counts as not done
 
-Headings that don't start with a version (`## Later`) are skipped.
+Headings that don't start with a version (`## Later`, or a numbered section such as `## 1. Foundations`: a
+version has a dot or a leading `v`) are skipped, and so is anything inside a code fence, in both files.
 
 `CHANGELOG.md` ([Keep a Changelog](https://keepachangelog.com) style):
 

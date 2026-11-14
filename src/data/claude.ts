@@ -11,8 +11,9 @@
 //   projects/<slug>/<sessionId>/workflows/scripts/<name>-<runId>.js
 import type { Stats } from 'node:fs';
 import { open, readdir, readFile, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { ClaudeSession, SessionStatus, Subagent, WorkflowPhase, WorkflowRun, WorkflowStatus } from '../model';
+import { parseLstart, readProcessStarts } from '../procs';
 
 export interface ReadClaudeOptions {
   /** Normally ~/.claude. */
@@ -21,20 +22,35 @@ export interface ReadClaudeOptions {
   endedSessionDays: number;
   now: number;
   isPidAlive?: (pid: number) => boolean;
+  /** When each pid's process started (a pid missing from the map has no process), or undefined when that cannot
+   *  be told. Default: ps. */
+  processStarts?: (pids: number[]) => Promise<Map<number, number> | undefined>;
   /** Injected by the store (the git main checkout of cwd). Default: cwd itself. */
   resolveProjectKey?: (cwd: string) => Promise<string>;
 }
 
+/** The project key of a session whose folder is unknown (a transcript with no record carrying a cwd, in a project
+ *  directory no other session's folder is named after). Not a path: nothing resolves or opens it. */
+export const NO_FOLDER_KEY = '(unknown folder)';
+
 const DAY_MS = 86_400_000;
 /** Concurrent file operations (also bounds open file descriptors). */
 const CONCURRENCY = 24;
+/** Concurrent transcript scans: each holds a read buffer and the strings decoded from it, in an extension host
+ *  shared with other extensions. */
+const SCAN_CONCURRENCY = 8;
+/** Tail reads go backwards in chunks of this size, through one buffer per scan. */
+const CHUNK_BYTES = 1024 * 1024;
+/** A pid file whose recorded start is this far from its process's real start belongs to an earlier process that
+ *  had the same pid (ps prints whole seconds; Claude Code writes startedAt a moment after the process starts). */
+const START_SLACK_MS = 30_000;
 const MAX_PROMPTS = 5;
 const PROMPT_CHARS = 300;
 const HEAD_BYTES = 64 * 1024;
-/** Cumulative tail sizes read from a transcript, step by step, until 5 prompts are found. Claude Code keeps
- *  re-appending its title and last-prompt records, so the newest ones always sit in the first step (measured: at
- *  most ~34 KB from the end); only older prompts need the later steps. */
-const TAIL_STEPS = [256 * 1024, 1024 * 1024, 4 * 1024 * 1024];
+/** How far back from the end a transcript is read, chunk by chunk, until 5 prompts are found. Claude Code keeps
+ *  re-appending its title and last-prompt records, so the newest ones always sit in the first chunk (measured: at
+ *  most ~34 KB from the end); only older prompts need more. */
+const TAIL_BYTES = 4 * 1024 * 1024;
 const MAX_JOURNAL_BYTES = 8 * 1024 * 1024;
 const MAX_SCRIPT_BYTES = 64 * 1024;
 
@@ -146,6 +162,8 @@ interface LiveFile {
   waitingFor?: string;
   startedAt?: number;
   updatedAt?: number;
+  /** procStart: the process's start as ps printed it, in UTC. */
+  procStartAt?: number;
   version?: string;
 }
 
@@ -164,8 +182,19 @@ export function parseLiveFile(text: string): LiveFile | undefined {
     waitingFor: str(o.waitingFor),
     startedAt: num(o.startedAt),
     updatedAt: num(o.updatedAt),
+    procStartAt: typeof o.procStart === 'string' ? parseLstart(o.procStart) : undefined,
     version: str(o.version),
   };
+}
+
+/** The pid file was written by the process that has its pid now, as far as start times tell. A pid file outlives a
+ *  crash or a reboot, and its pid is soon reused by an unrelated process that started later. */
+export function sameProcess(f: LiveFile, realStart: number | undefined): boolean {
+  if (realStart === undefined) return false;
+  if (f.procStartAt !== undefined) return Math.abs(f.procStartAt - realStart) <= START_SLACK_MS;
+  // Without procStart: a file whose process started before the running one cannot be the running one's.
+  const recorded = f.startedAt ?? f.updatedAt;
+  return recorded === undefined || recorded >= realStart - START_SLACK_MS;
 }
 
 async function readLiveFiles(gate: Gate, dir: string): Promise<LiveFile[]> {
@@ -289,9 +318,9 @@ function takeLine(line: string, acc: TranscriptInfo, wantPrompts: boolean): void
 
 type FileHandle = Awaited<ReturnType<typeof open>>;
 
-/** Feeds the complete lines of [from, to) to `take`, newest first, reading backwards in the TAIL_STEPS sizes and
- *  stopping between steps once `enough()`. A line still being written (after the last newline) is skipped, and so is
- *  the line cut by the start of the last step. */
+/** Feeds the complete lines of [from, to) to `take`, newest first, reading backwards chunk by chunk through one
+ *  buffer, at most TAIL_BYTES, and stopping between chunks once `enough()`. A line still being written (after the
+ *  last newline) is skipped, and so is the line cut by where reading stopped. */
 async function scanBackwards(
   fh: FileHandle,
   from: number,
@@ -299,15 +328,17 @@ async function scanBackwards(
   take: (line: string) => void,
   enough: () => boolean,
 ): Promise<{ end: number; reachedFrom: boolean; lowest: number }> {
+  const floor = Math.max(from, to - TAIL_BYTES);
+  const buf = Buffer.allocUnsafe(Math.min(CHUNK_BYTES, to - floor));
   let pos = to;
-  let carry = Buffer.alloc(0);
+  // The start of the oldest line seen so far, whose beginning lies in the next (older) chunk.
+  let carry: Buffer | undefined;
   let end = -1;
-  for (const step of TAIL_STEPS) {
-    const start = Math.max(from, to - step);
-    if (start >= pos) continue;
-    const buf = Buffer.alloc(pos - start);
-    const { bytesRead } = await fh.read(buf, 0, buf.length, start);
-    const data = carry.length ? Buffer.concat([buf.subarray(0, bytesRead), carry]) : buf.subarray(0, bytesRead);
+  while (pos > floor) {
+    const start = Math.max(floor, pos - buf.length);
+    const { bytesRead } = await fh.read(buf, 0, pos - start, start);
+    const chunk = buf.subarray(0, bytesRead);
+    const data = carry ? Buffer.concat([chunk, carry]) : chunk;
     let j = data.length;
     if (end < 0) {
       const nl = data.lastIndexOf(10);
@@ -327,7 +358,8 @@ async function scanBackwards(
       if (j > 0 && end >= 0) take(data.toString('utf8', 0, j));
       return { end: end < 0 ? from : end, reachedFrom: true, lowest: from };
     }
-    carry = Buffer.from(data.subarray(0, j));
+    // A copy: `buf` is overwritten by the next read.
+    carry = j > 0 ? Buffer.from(data.subarray(0, j)) : undefined;
     if (enough()) break;
   }
   return { end: end < 0 ? from : end, reachedFrom: false, lowest: pos };
@@ -391,17 +423,17 @@ function mergeInfo(newer: TranscriptInfo, older: TranscriptInfo): TranscriptInfo
   };
 }
 
-async function readTranscript(gate: Gate, t: TranscriptFile): Promise<TranscriptInfo> {
+async function readTranscript(gate: Gate, scanGate: Gate, t: TranscriptFile): Promise<TranscriptInfo> {
   touched.add(t.path);
   const hit = transcriptCache.get(t.path);
   if (hit && hit.size === t.size && hit.mtimeMs === t.mtimeMs) return hit.info;
   let entry: TranscriptEntry;
   if (hit && t.size > hit.size) {
     // Transcripts are append-only: read only what was added since the last complete line.
-    const delta = await gate(() => scanTranscript(t.path, hit.scannedTo, t.size, false));
+    const delta = await scanGate(() => gate(() => scanTranscript(t.path, hit.scannedTo, t.size, false)));
     entry = { size: t.size, mtimeMs: t.mtimeMs, scannedTo: delta.end, info: mergeInfo(delta.info, hit.info) };
   } else {
-    const full = await gate(() => scanTranscript(t.path, 0, t.size, true));
+    const full = await scanGate(() => gate(() => scanTranscript(t.path, 0, t.size, true)));
     entry = { size: t.size, mtimeMs: t.mtimeMs, scannedTo: full.end, info: full.info };
   }
   transcriptCache.set(t.path, entry);
@@ -626,8 +658,10 @@ async function readSessionDir(gate: Gate, sessionDir: string, liveSince: number 
       return { run, agents: settled };
     }),
   );
-  // A subagent cannot outlive its session's process.
-  const subagents = [...direct.map((a) => ({ ...a, finished: a.finished || !live })), ...perRun.flatMap((r) => r.agents)].sort(
+  // A subagent cannot outlive its session's process, and one whose transcript the live process never touched was
+  // left behind by an earlier process of a resumed session (killed with it, so never marked finished).
+  const leftBehind = (a: Subagent) => !live || (a.updatedAt !== undefined && a.updatedAt < liveSince);
+  const subagents = [...direct.map((a) => ({ ...a, finished: a.finished || leftBehind(a) })), ...perRun.flatMap((r) => r.agents)].sort(
     (a, b) => Number(a.finished) - Number(b.finished) || (b.updatedAt ?? 0) - (a.updatedAt ?? 0),
   );
   const workflows = perRun
@@ -638,6 +672,10 @@ async function readSessionDir(gate: Gate, sessionDir: string, liveSince: number 
 
 // ───────────────────────────── Sessions ─────────────────────────────
 
+/** The name Claude Code gives a folder's directory under projects/: every character but ASCII letters and digits
+ *  becomes "-" ("/work/demo/.claude" → "-work-demo--claude"). */
+export const projectSlug = (cwd: string): string => cwd.replace(/[^A-Za-z0-9]/g, '-');
+
 /** A title from a prompt: up to 60 characters, cut at a word. */
 function firstWords(s: string): string {
   if (s.length <= 60) return s;
@@ -645,8 +683,8 @@ function firstWords(s: string): string {
   return `${s.slice(0, space > 20 ? space : 59).trimEnd()}…`;
 }
 
-async function buildSession(gate: Gate, id: string, live: LiveFile | undefined, transcript: TranscriptFile | undefined): Promise<Omit<ClaudeSession, 'projectKey'>> {
-  const info = transcript ? await readTranscript(gate, transcript).catch(emptyInfo) : emptyInfo();
+async function buildSession(gate: Gate, scanGate: Gate, id: string, live: LiveFile | undefined, transcript: TranscriptFile | undefined): Promise<Omit<ClaudeSession, 'projectKey'>> {
+  const info = transcript ? await readTranscript(gate, scanGate, transcript).catch(emptyInfo) : emptyInfo();
   const none = { subagents: [], workflows: [] };
   const { subagents, workflows } = transcript
     ? await readSessionDir(gate, join(transcript.dir, id), live ? (live.startedAt ?? 0) : undefined).catch(() => none)
@@ -667,7 +705,8 @@ async function buildSession(gate: Gate, id: string, live: LiveFile | undefined, 
     cwd: live?.cwd ?? info.cwd ?? '',
     gitBranch: info.gitBranch,
     lastPrompt,
-    recentPrompts: info.prompts,
+    // A big transcript can hold its prompts further back than the tail read reaches; the last one is always known.
+    recentPrompts: info.prompts.length === 0 && lastPrompt ? [lastPrompt] : info.prompts,
     startedAt: live?.startedAt ?? info.firstAt,
     updatedAt: activity.length ? Math.floor(Math.max(...activity)) : undefined,
     claudeVersion: live?.version ?? info.version,
@@ -680,7 +719,9 @@ async function buildSession(gate: Gate, id: string, live: LiveFile | undefined, 
 /** Every live Claude Code session, plus the ended ones active within `endedSessionDays`: live first, then newest. */
 export async function readClaude(opts: ReadClaudeOptions): Promise<ClaudeSession[]> {
   const gate = makeGate(CONCURRENCY);
+  const scanGate = makeGate(SCAN_CONCURRENCY);
   const isAlive = opts.isPidAlive ?? defaultPidAlive;
+  const processStarts = opts.processStarts ?? readProcessStarts;
   const resolveKey = opts.resolveProjectKey ?? (async (cwd: string) => cwd);
   touched = new Set();
 
@@ -689,9 +730,12 @@ export async function readClaude(opts: ReadClaudeOptions): Promise<ClaudeSession
     listTranscripts(gate, join(opts.claudeDir, 'projects')),
   ]);
 
+  const alive = liveFiles.filter((f) => isAlive(f.pid));
+  const starts = await processStarts([...new Set(alive.map((f) => f.pid))]).catch(() => undefined);
   const live = new Map<string, LiveFile>();
-  for (const f of liveFiles) {
-    if (!isAlive(f.pid)) continue;
+  for (const f of alive) {
+    // Without start times (no ps) the pid check is all there is.
+    if (starts && !sameProcess(f, starts.get(f.pid))) continue;
     const prev = live.get(f.sessionId);
     if (!prev || (f.updatedAt ?? 0) > (prev.updatedAt ?? 0)) live.set(f.sessionId, f);
   }
@@ -701,13 +745,32 @@ export async function readClaude(opts: ReadClaudeOptions): Promise<ClaudeSession
   for (const t of transcripts.values()) if (t.size > 0 && t.mtimeMs >= cutoff) ids.add(t.sessionId);
 
   const built = await Promise.all(
-    [...ids].map((id) => buildSession(gate, id, live.get(id), transcripts.get(id)).catch(() => undefined)),
+    [...ids].map((id) => buildSession(gate, scanGate, id, live.get(id), transcripts.get(id)).catch(() => undefined)),
   );
   const sessions = built.filter((s) => s !== undefined);
 
+  // Claude Code names a project directory after the folder the session started in, so a session with no cwd of its
+  // own (a transcript with no record carrying one) is in the folder whose name gives that directory's name, when
+  // another session shows it. (Not simply its neighbours' cwd: a record's cwd follows the session's `cd`s.) An
+  // empty cwd is never resolved: git would read it as the extension host's own working directory.
+  const bySlug = new Map<string, string>();
+  for (const s of sessions) if (s.cwd) bySlug.set(projectSlug(s.cwd), s.cwd);
   const keys = new Map<string, Promise<string>>();
-  for (const s of sessions) if (!keys.has(s.cwd)) keys.set(s.cwd, resolveKey(s.cwd).catch(() => s.cwd));
-  const out: ClaudeSession[] = await Promise.all(sessions.map(async (s) => ({ ...s, projectKey: await (keys.get(s.cwd) as Promise<string>) })));
+  const keyOf = (cwd: string) => {
+    let k = keys.get(cwd);
+    if (!k) {
+      k = resolveKey(cwd).catch(() => cwd);
+      keys.set(cwd, k);
+    }
+    return k;
+  };
+  const out: ClaudeSession[] = await Promise.all(
+    sessions.map(async (s) => {
+      const dir = transcripts.get(s.sessionId)?.dir;
+      const folder = s.cwd || (dir ? bySlug.get(basename(dir)) : undefined);
+      return { ...s, projectKey: folder ? await keyOf(folder) : NO_FOLDER_KEY };
+    }),
+  );
 
   // Forget files that are gone or fell out of the window.
   for (const k of fileCache.keys()) if (!touched.has(k)) fileCache.delete(k);

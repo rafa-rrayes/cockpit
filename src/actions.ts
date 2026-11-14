@@ -1,16 +1,20 @@
 // Every message the webview can post, handled here. The webview is treated as untrusted input: each message is
-// checked against the current State (known session ids, known paths, https URLs) before anything happens, and
+// checked against the current State (known session ids, known paths, links it shows) before anything happens, and
 // nothing changes on disk except through cleanMerged, which lists what it would do and asks first.
 import { existsSync, statSync } from 'node:fs';
 import * as vscode from 'vscode';
-import { runGit } from './data/git';
-import { cleanCandidates, isHttpsUrl, isSessionId, knownFolders, parseMessage } from './guards';
+import { removeMerged } from './clean';
+import { cleanCandidates, isSessionId, knownFolders, knownUrls, parseMessage } from './guards';
 import type { ClaudeSession, State, WorkItem } from './model';
 
 export interface ActionHost {
   state(): State | undefined;
   refresh(): Promise<void>;
+  /** Claude sessions and git, not GitHub: what "Clean merged" decides on. */
+  refreshLocal(): Promise<void>;
   refreshGit(): Promise<void>;
+  /** Folders open in other VS Code windows. */
+  otherWindowFolders(): string[];
   terminalFor(sessionId: string): vscode.Terminal | undefined;
   /** Sends the current State to the webview again. */
   resend(): void;
@@ -36,13 +40,14 @@ export async function handleMessage(raw: unknown, host: ActionHost): Promise<voi
       vscode.window.setStatusBarMessage('Cockpit: copied', 2000);
       return;
     case 'openUrl':
-      if (!isHttpsUrl(msg.url)) return refuse(`Cockpit only opens https links.`);
+      if (!state || !knownUrls(state).has(msg.url)) return refuse('Cockpit only opens the links it shows.');
       await vscode.env.openExternal(vscode.Uri.parse(msg.url, true));
       return;
     case 'openFolder':
       if (!state || !knownFolders(state).has(msg.path)) return refuse('Cockpit only opens folders it shows.');
       if (!existsSync(msg.path)) return refuse(`${msg.path} no longer exists.`);
-      await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(msg.path), { forceNewWindow: msg.newWindow });
+      // Always a new window, whatever the message says: replacing this window's folder is never what a button means.
+      await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(msg.path), { forceNewWindow: true });
       return;
     case 'resumeSession':
     case 'focusSession':
@@ -102,49 +107,62 @@ function describe(i: WorkItem): string {
   return parts.join('  ·  ');
 }
 
-async function cleanMerged(host: ActionHost): Promise<void> {
-  // Decide on fresh data, not on a State that may be a minute old.
-  await host.refreshGit();
+interface CleanPlan {
+  repoRoot: string;
+  defaultBranch: string;
+  items: WorkItem[];
+  /** Merged on the board through their PR, but not by git's measure. */
+  squashMerged: WorkItem[];
+}
+
+/** Decides on fresh sessions and git, never on a State that may be a minute old. */
+async function planClean(host: ActionHost): Promise<CleanPlan | undefined> {
+  await host.refreshLocal();
   const state = host.state();
   const repoRoot = state?.work.repoRoot;
-  if (!state || !repoRoot) return refuse('No git repository is open.');
-  const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+  const defaultBranch = state?.work.defaultBranch;
+  if (!state || !repoRoot || !defaultBranch) return undefined;
+  const folders = [...(vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath), ...host.otherWindowFolders()];
   const items = cleanCandidates(state, folders);
+  const squashMerged = state.work.items.filter((i) => i.group === 'merged' && !i.isDefault && i.ahead > 0);
+  return { repoRoot, defaultBranch, items, squashMerged };
+}
+
+const itemKey = (i: WorkItem) => `${i.branch}\0${i.worktreePath ?? ''}`;
+
+async function cleanMerged(host: ActionHost): Promise<void> {
+  const plan = await planClean(host);
+  if (!plan) return refuse('No git repository is open.');
+  const { items, repoRoot, defaultBranch } = plan;
+  const squashNote = plan.squashMerged.length
+    ? `${plan.squashMerged.length} squash-merged branch${plan.squashMerged.length === 1 ? ' is' : 'es are'} left alone: ${defaultBranch} has their changes but not their commits, so git cannot confirm it. Delete ${plan.squashMerged.length === 1 ? 'it' : 'them'} by hand once you are sure.`
+    : '';
   if (items.length === 0) {
-    void vscode.window.showInformationMessage('Nothing to clean: no merged branch is clean, unused and free of live Claudes.');
+    const nothing = 'Nothing to clean: no merged branch is clean, unused and free of live Claudes.';
+    void (squashNote ? vscode.window.showInformationMessage(nothing, { modal: true, detail: squashNote }) : vscode.window.showInformationMessage(nothing));
     return;
   }
   const worktrees = items.filter((i) => i.worktreePath).length;
   const detail = [
-    `Removes ${worktrees} worktree${worktrees === 1 ? '' : 's'} with "git worktree remove" and deletes ${items.length} branch${items.length === 1 ? '' : 'es'} with "git branch -d". Git refuses anything with uncommitted changes or unmerged commits, and those are kept.`,
-    '',
-    ...items.map(describe),
-  ].join('\n');
+    `Removes ${worktrees} worktree${worktrees === 1 ? '' : 's'} with "git worktree remove" and deletes ${items.length} branch${items.length === 1 ? '' : 'es'} whose commits are all in ${defaultBranch}. Each branch is checked again before anything of it is removed, and git keeps any worktree with uncommitted or untracked changes.`,
+    worktrees ? 'Ignored files in those worktrees (node_modules, .venv, build output, ignored data folders) are deleted with them.' : '',
+    squashNote,
+    items.map(describe).join('\n'),
+  ]
+    .filter(Boolean)
+    .join('\n\n');
   const go = `Remove ${items.length}`;
   const answer = await vscode.window.showWarningMessage(`Clean ${items.length} merged branch${items.length === 1 ? '' : 'es'}?`, { modal: true, detail }, go);
   if (answer !== go) return;
 
-  const removed: string[] = [];
-  const refused: string[] = [];
-  const firstLine = (s: string) => s.trim().split('\n')[0] ?? '';
-  for (const item of items) {
-    if (item.worktreePath) {
-      const r = await runGit(repoRoot, ['worktree', 'remove', item.worktreePath], 30_000);
-      if (!r.ok) {
-        refused.push(`${item.branch}: ${firstLine(r.stderr) || 'git worktree remove failed'}`);
-        continue;
-      }
-    }
-    const r = await runGit(repoRoot, ['branch', '-d', item.branch], 15_000);
-    if (r.ok) removed.push(item.worktreePath ? `${item.branch} and its worktree` : item.branch);
-    else refused.push(`${item.branch}: ${firstLine(r.stderr) || 'git branch -d failed'}${item.worktreePath ? ' (its worktree was removed)' : ''}`);
-  }
+  // The dialog may have stayed open while a Claude started in one of these worktrees: decide again, and act only on
+  // what is still a candidate and was confirmed.
+  const fresh = await planClean(host);
+  const stillOk = new Set((fresh?.repoRoot === repoRoot ? fresh.items : []).map(itemKey));
+  const { removed, kept } = await removeMerged(repoRoot, items, (i) => !stillOk.has(itemKey(i)));
   await host.refreshGit();
 
-  const lines = [
-    removed.length ? `Removed:\n${removed.join('\n')}` : 'Nothing was removed.',
-    refused.length ? `Git refused:\n${refused.join('\n')}` : '',
-  ].filter(Boolean);
+  const lines = [removed.length ? `Removed:\n${removed.join('\n')}` : 'Nothing was removed.', kept.length ? `Kept:\n${kept.join('\n')}` : ''].filter(Boolean);
   const summary = `Cleaned ${removed.length} of ${items.length}.`;
   void vscode.window.showInformationMessage(summary, { modal: true, detail: lines.join('\n\n') });
 }

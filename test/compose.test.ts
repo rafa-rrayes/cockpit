@@ -94,8 +94,14 @@ describe('itemForSession', () => {
     expect(find(session('c', { cwd: REPO, gitBranch: 'feature-x' }))).toBeUndefined();
   });
 
-  it('a session with no cwd belongs nowhere', () => {
+  it('a session with no cwd belongs nowhere, even when its project is known', () => {
     expect(find(session('a', { cwd: '', projectKey: '' }))).toBeUndefined();
+    expect(find(session('b', { cwd: '', projectKey: REPO }))).toBeUndefined();
+  });
+
+  it('a session in another repository nested in the main checkout is not the main checkout\'s', () => {
+    expect(find(session('a', { cwd: `${REPO}/sites/landing`, projectKey: `${REPO}/sites/landing` }))).toBeUndefined();
+    expect(find(session('b', { cwd: `${REPO}/sites/landing/src`, projectKey: `${REPO}/sites/landing`, live: true, status: 'busy' }))).toBeUndefined();
   });
 });
 
@@ -114,6 +120,24 @@ describe('buildItems', () => {
     const cwd = '/work/old';
     expect(buildItems(git(), [session('a', { cwd, live: true, status: 'idle' })], []).find((i) => i.branch === 'old')?.group).toBe('active');
     expect(buildItems(git(), [session('a', { cwd })], []).find((i) => i.branch === 'old')?.group).toBe('stale');
+  });
+
+  it('a clean branch with nothing ahead is merged, unless a Claude works there: then it is active', () => {
+    const list = [item('main', { isDefault: true, worktreePath: REPO }), item('fresh', { group: 'merged', worktreePath: `${REPO}/.claude/worktrees/fresh` })];
+    const cwd = `${REPO}/.claude/worktrees/fresh`;
+    const group = (sessions: ClaudeSession[]) => buildItems(git(list), sessions, []).find((i) => i.branch === 'fresh')?.group;
+    expect(group([session('a', { cwd })])).toBe('merged');
+    expect(group([session('a', { cwd, live: true, status: 'busy' })])).toBe('active');
+  });
+
+  it('the worktree of a subagent still running in a live session is active, though the session sits in the main checkout', () => {
+    const wt = `${REPO}/.claude/worktrees/agent-a0b1c2d3e4f5a6b7c`;
+    const list = [item('main', { isDefault: true, worktreePath: REPO }), item('worktree-agent-a0b1c2d3e4f5a6b7c', { group: 'merged', worktreePath: wt })];
+    const agent = { id: 'a0b1c2d3e4f5a6b7c', description: 'Explore', agentType: 'Explore', finished: false };
+    const group = (s: ClaudeSession) => buildItems(git(list), [s], []).find((i) => i.worktreePath === wt)?.group;
+    expect(group(session('a', { live: true, status: 'busy', subagents: [agent] }))).toBe('active');
+    expect(group(session('a', { live: true, status: 'busy', subagents: [{ ...agent, finished: true }] }))).toBe('merged');
+    expect(group(session('a', { subagents: [agent] }))).toBe('merged');
   });
 
   it('links the open PR before older ones, and never one for the default branch', () => {

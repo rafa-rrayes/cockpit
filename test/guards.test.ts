@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { compose } from '../src/compose';
-import { cleanCandidates, isHttpsUrl, isSessionId, knownFolders, parseMessage } from '../src/guards';
+import { cleanCandidates, isHttpsUrl, isSessionId, knownFolders, knownUrls, parseMessage } from '../src/guards';
 import type { ClaudeSession, WorkItem } from '../src/model';
-import { ancestorsOf, parsePsTable } from '../src/procs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { ancestorsOf, parseLstart, parseProcessStarts, parsePsTable, readProcessStarts } from '../src/procs';
+import { WindowRegistry } from '../src/windows';
 
 const REPO = '/work/shop';
 const WT = `${REPO}/.claude/worktrees`;
@@ -74,6 +78,31 @@ describe('knownFolders', () => {
     expect([...folders].sort()).toEqual(['/other', REPO, `${WT}/x`, `${REPO}/core`].sort());
     expect(folders.has('/etc')).toBe(false);
   });
+
+  it('never a relative path, such as the key of a session whose folder is unknown', () => {
+    const state = compose({ now: 0, sessions: [session('a', { cwd: '', projectKey: '(unknown folder)' })] });
+    expect([...knownFolders(state)]).toEqual([]);
+  });
+});
+
+describe('knownUrls', () => {
+  it('the https links the State shows, nothing else', () => {
+    const prUrl = 'https://github.com/acme/shop/pull/7';
+    const checks = 'https://github.com/acme/shop/actions/runs/70/job/1';
+    const runUrl = 'https://github.com/acme/shop/actions/runs/71';
+    const state = compose({
+      now: 0,
+      sessions: [],
+      git: { available: true, repoRoot: REPO, defaultBranch: 'main', items: [item('main', { isDefault: true, group: 'active', worktreePath: REPO }), item('x', { group: 'active', ahead: 1 })] },
+      github: {
+        prs: [{ number: 7, title: 'X', url: prUrl, branch: 'x', isDraft: false, state: 'open', checks: { state: 'failure', url: checks }, updatedAt: 1 }],
+        ciRuns: [{ id: 71, title: 't', workflow: 'CI', branch: 'main', status: 'failure', url: runUrl, startedAt: 2 }, { id: 72, title: 't', workflow: 'CI', branch: 'main', status: 'success', url: 'http://plain.example/run' }],
+      },
+    });
+    const urls = knownUrls(state);
+    expect([...urls].sort()).toEqual([checks, prUrl, runUrl].sort());
+    expect(urls.has('https://attacker.example/x')).toBe(false);
+  });
 });
 
 describe('cleanCandidates', () => {
@@ -93,11 +122,19 @@ describe('cleanCandidates', () => {
         item('active', { group: 'active', ahead: 1, worktreePath: `${WT}/active` }),
         item('stale', { group: 'stale', ahead: 1 }),
         item('dirty', { dirtyCount: 1, worktreePath: `${WT}/dirty` }),
+        item('squash-merged', { ahead: 2, worktreePath: `${WT}/squash-merged` }),
+        item('worktree-agent-a1', { worktreePath: `${WT}/agent-a1` }),
+        item('other-window', { worktreePath: `${WT}/other-window` }),
         item('-x'),
       ],
-      [session('e', { cwd: `${WT}/ended-claude` }), session('l', { cwd: `${WT}/live-claude/app`, live: true, status: 'busy' })],
+      [
+        session('e', { cwd: `${WT}/ended-claude` }),
+        session('l', { cwd: `${WT}/live-claude/app`, live: true, status: 'busy' }),
+        // Its cwd is the main checkout; its running subagent works in agent-a1.
+        session('m', { live: true, status: 'busy', subagents: [{ id: 'a1', description: 'Explore', agentType: 'Explore', finished: false }] }),
+      ],
     );
-    const names = cleanCandidates(state, [`${WT}/open-here`]).map((i) => i.branch);
+    const names = cleanCandidates(state, [`${WT}/open-here`, `${WT}/other-window`]).map((i) => i.branch);
     expect(names.sort()).toEqual(['done', 'done-no-worktree', 'ended-claude']);
   });
 
@@ -119,5 +156,47 @@ describe('process tree', () => {
     expect(ancestorsOf(420, table)).toEqual([410, 400]);
     expect(ancestorsOf(500, table)).toEqual([]);
     expect(ancestorsOf(999, table)).toEqual([]);
+  });
+
+  it('reads start times as ps prints them under TZ=UTC0, and as procStart is written', () => {
+    expect(parseLstart('Fri Nov 13 04:50:01 2026')).toBe(Date.UTC(2026, 10, 13, 4, 50, 1));
+    expect(parseLstart('Thu Jan  1 00:00:12 1970')).toBe(12_000);
+    for (const bad of ['', 'yesterday', 'Fri Foo 13 04:50:01 2026', '2026-11-13T04:50:01Z']) expect(parseLstart(bad)).toBeUndefined();
+    const starts = parseProcessStarts('61148 Fri Nov 13 23:44:49 2026    \n 4378 Fri Nov  3 04:50:01 2026\njunk\n');
+    expect([...starts]).toEqual([
+      [61148, Date.UTC(2026, 10, 13, 23, 44, 49)],
+      [4378, Date.UTC(2026, 10, 3, 4, 50, 1)],
+    ]);
+  });
+
+  it('asks ps for the start of this process, and gets nothing for a pid with no process', async () => {
+    const starts = await readProcessStarts([process.pid, 99_998]);
+    const own = starts?.get(process.pid);
+    expect(own).toBeGreaterThan(Date.now() - 3_600_000);
+    expect(own).toBeLessThanOrEqual(Date.now());
+    expect(starts?.has(99_998)).toBe(false);
+    expect(await readProcessStarts([99_998])).toEqual(new Map());
+  });
+});
+
+describe('WindowRegistry', () => {
+  it('lists the folders of the other live windows, and forgets windows that are gone', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cockpit-windows-'));
+    try {
+      const alive = new Set([1, 2]);
+      const me = new WindowRegistry(dir, 1, (p) => alive.has(p));
+      const other = new WindowRegistry(dir, 2, (p) => alive.has(p));
+      const crashed = new WindowRegistry(dir, 3, (p) => alive.has(p));
+      me.publish([`${WT}/mine`]);
+      other.publish([`${WT}/theirs`]);
+      crashed.publish([`${WT}/crashed`]);
+      writeFileSync(join(dir, '4.json'), '{ half-written');
+      alive.add(4);
+      expect(me.otherFolders()).toEqual([`${WT}/theirs`]);
+      other.dispose();
+      expect(me.otherFolders()).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

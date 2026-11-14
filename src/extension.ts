@@ -1,12 +1,13 @@
 // Activation: one Cockpit tab in the editor area (created, revealed, or restored after a reload), the startup
 // takeover, the status-bar item and the activity-bar entry. Data comes from the Store; actions go to actions.ts.
 import { randomBytes } from 'node:crypto';
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
 import * as vscode from 'vscode';
 import { handleMessage } from './actions';
 import type { HostMessage, State } from './model';
 import { defaultClaudeDir } from './sources';
 import { Store } from './store';
+import { WindowRegistry } from './windows';
 
 const VIEW_TYPE = 'cockpit.overview';
 const ASKED_STARTUP_EDITOR = 'cockpit.askedStartupEditor';
@@ -67,6 +68,7 @@ class CockpitPanel implements vscode.Disposable {
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly store: Store,
+    private readonly windows: WindowRegistry,
   ) {
     this.disposables.push(store.onDidChange(() => this.post()));
     // A Cockpit tab that is visible after a reload is revived right after activation: wait for it instead of
@@ -153,7 +155,9 @@ class CockpitPanel implements vscode.Disposable {
         handleMessage(raw, {
           state: () => this.store.state,
           refresh: () => this.store.refresh(),
+          refreshLocal: () => this.store.refreshLocal(),
           refreshGit: () => this.store.refreshGit(),
+          otherWindowFolders: () => this.windows.otherFolders(),
           terminalFor: (id) => this.store.terminalFor(id),
           resend: () => {
             this.ready = true;
@@ -234,13 +238,19 @@ export function activate(context: vscode.ExtensionContext): CockpitTestApi {
     claudeDir: defaultClaudeDir(),
     log: (line) => log.warn(line),
   });
-  const panel = new CockpitPanel(context.extensionUri, store);
+  // Every window records its folders, so "Clean merged" in one never removes a worktree another one shows.
+  const windows = new WindowRegistry(join(context.globalStorageUri.fsPath, 'windows'));
+  const publishFolders = () => windows.publish((vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath));
+  publishFolders();
+  const panel = new CockpitPanel(context.extensionUri, store, windows);
 
   // The activity-bar entry: its view holds a welcome text with an Open button, and showing it opens the tab.
   const view = vscode.window.createTreeView<never>('cockpit.home', { treeDataProvider: { getChildren: () => [], getTreeItem: (e) => e } });
 
   context.subscriptions.push(
     log,
+    windows,
+    vscode.workspace.onDidChangeWorkspaceFolders(publishFolders),
     store,
     panel,
     view,

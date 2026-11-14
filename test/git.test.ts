@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   countStatusEntries,
+  GitReadError,
   groupOf,
+  locateFailure,
   parseBranchList,
   parseLog,
   parsePair,
@@ -192,6 +194,15 @@ describe('readGit on a real repository', () => {
 
     // A detached worktree has no branch: left out.
     sh(repo, ['worktree', 'add', '-q', '--detach', join(base, 'wt-detached')]);
+
+    // A locked worktree, as Claude Code locks an agent's: clean and nothing ahead, but not "merged".
+    sh(repo, ['worktree', 'add', '-q', '-b', 'locked-agent', join(base, 'wt-locked')]);
+    sh(repo, ['worktree', 'lock', join(base, 'wt-locked')]);
+
+    // A worktree inside the main checkout (where Claude Code puts them), removed before anything asked about it.
+    sh(repo, ['worktree', 'add', '-q', '-b', 'removed-agent', join(repo, '.claude', 'worktrees', 'removed-agent')]);
+    sh(repo, ['worktree', 'remove', join(repo, '.claude', 'worktrees', 'removed-agent')]);
+    sh(repo, ['branch', '-q', '-D', 'removed-agent']);
   });
 
   afterAll(() => rmSync(base, { recursive: true, force: true }));
@@ -202,6 +213,43 @@ describe('readGit on a real repository', () => {
     expect(await projectRootOf(join(base, 'wt-wip', 'sub'))).toBe(repo);
     expect(await projectRootOf(base)).toBe(base);
     expect(await projectRootOf(join(base, 'does-not-exist'))).toBe(join(base, 'does-not-exist'));
+    // A removed worktree still belongs to its repository: git answers for the folder it was in.
+    expect(await projectRootOf(join(repo, '.claude', 'worktrees', 'removed-agent'))).toBe(repo);
+    expect(await projectRootOf(join(repo, '.claude', 'worktrees', 'removed-agent', 'app', 'src'))).toBe(repo);
+    // Never asked for an empty or relative path: git would answer for the process's own folder.
+    expect(await projectRootOf('')).toBe('');
+  });
+
+  it('tells "not a repository" apart from a git failure that says nothing', () => {
+    expect(locateFailure({ stderr: 'fatal: not a git repository (or any of the parent directories): .git\n', code: 128, timedOut: false })).toBe('none');
+    expect(locateFailure({ stderr: "fatal: cannot change to '/gone': No such file or directory\n", code: 128, timedOut: false })).toBe('none');
+    expect(locateFailure({ stderr: '', code: 'ENOENT', timedOut: false })).toBe('none');
+    expect(locateFailure({ stderr: 'fatal: this operation must be run in a work tree\n', code: 128, timedOut: false })).toBe('none');
+    expect(locateFailure({ stderr: '', code: undefined, timedOut: true })).toBe('failed');
+    expect(locateFailure({ stderr: 'fatal: unable to read index: Resource temporarily unavailable\n', code: 128, timedOut: false })).toBe('failed');
+  });
+
+  it('throws on a git failure that says nothing, so the last result is kept, and does not cache it', async () => {
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    const bin = join(base, 'flaky-git-bin');
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, 'git'),
+      `#!/bin/sh\nfor a in "$@"; do case "$a" in rev-parse) echo "fatal: unable to read: Resource temporarily unavailable" >&2; exit 128;; esac; done\nexec "${realGit}" "$@"\n`,
+      { mode: 0o755 },
+    );
+    const path = process.env.PATH;
+    // A folder nothing asked about yet (answers are cached per folder).
+    const fresh = join(base, 'wt-wip', 'sub', 'never-asked');
+    mkdirSync(fresh);
+    process.env.PATH = `${bin}:${path ?? ''}`;
+    try {
+      await expect(readGit(join(base, 'wt-wip'), Date.now())).rejects.toBeInstanceOf(GitReadError);
+      expect(await projectRootOf(fresh)).toBe(fresh);
+    } finally {
+      process.env.PATH = path;
+    }
+    expect(await projectRootOf(fresh)).toBe(repo);
   });
 
   it('reads branches, groups, counts and worktrees', async () => {
@@ -212,8 +260,9 @@ describe('readGit on a real repository', () => {
     const by = Object.fromEntries(g.items.map((i) => [i.branch, i]));
     // Commits made within the same second tie, so check the order by group, not the exact sequence.
     expect(g.items[0]?.branch).toBe('main');
-    expect(g.items.slice(1).map((i) => i.group)).toEqual(['active', 'active', 'merged', 'merged', 'merged', 'stale']);
-    expect(Object.keys(by).sort()).toEqual(['ahead', 'deleted-by-hand', 'landed-on-github', 'main', 'merged-locally', 'old-work', 'wip']);
+    expect(g.items.slice(1).map((i) => i.group)).toEqual(['active', 'active', 'active', 'merged', 'merged', 'merged', 'stale']);
+    expect(Object.keys(by).sort()).toEqual(['ahead', 'deleted-by-hand', 'landed-on-github', 'locked-agent', 'main', 'merged-locally', 'old-work', 'wip']);
+    expect(by['locked-agent']).toMatchObject({ group: 'active', ahead: 0, dirtyCount: 0, worktreePath: join(base, 'wt-locked') });
 
     // Local main is one behind origin/main, so branches are measured against origin/main.
     expect(by.main).toMatchObject({ isDefault: true, group: 'active', ahead: 0, behind: 1, pushed: true, worktreePath: repo, isCurrent: false });

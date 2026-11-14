@@ -1,9 +1,10 @@
 // Git adapter: worktrees, branches and their state, read with a handful of git commands.
 // Pure parsers (exported for tests) are kept apart from the functions that run commands.
-// Nothing here throws on git failures: a missing repository, an old git or a broken worktree degrades the result.
+// A missing repository, an old git or a broken worktree degrades the result. Only readGit throws (GitReadError),
+// when git fails in a way that says nothing about the repository, so the caller keeps its last result.
 import { execFile } from 'node:child_process';
 import { realpath, stat } from 'node:fs/promises';
-import { basename, dirname } from 'node:path';
+import { basename, dirname, isAbsolute } from 'node:path';
 import type { ActivityEvent, WorkGroup, WorkItem } from '../model';
 
 // ───────────────────────────── Running commands ─────────────────────────────
@@ -51,6 +52,23 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return out;
+}
+
+/** Runs at most `limit` of the wrapped calls at once. */
+function makeLimiter(limit: number): <T>(fn: () => Promise<T>) => Promise<T> {
+  let active = 0;
+  const queue: (() => void)[] = [];
+  return async (fn) => {
+    if (active < limit) active++;
+    else await new Promise<void>((resolve) => queue.push(resolve)); // the finishing call hands over its slot
+    try {
+      return await fn();
+    } finally {
+      const next = queue.shift();
+      if (next) next();
+      else active--;
+    }
+  };
 }
 
 // git prints real paths for some things and recorded paths for others (/tmp vs /private/tmp on macOS): compare real ones.
@@ -230,27 +248,69 @@ interface Located {
   toplevel: string;
 }
 
-async function locate(cwd: string): Promise<Located | undefined> {
+/** Why git gave no repository: `none` is an answer (not in a repository, no such directory, no git), `failed` is
+ *  not (a timeout, a signal, an error git does not usually give), so nothing should be concluded or cached from it. */
+export function locateFailure(r: Pick<RunResult, 'stderr' | 'code' | 'timedOut'>): 'none' | 'failed' {
+  if (r.timedOut) return 'failed';
+  if (r.code === 'ENOENT') return 'none';
+  return /not a git repository|cannot change to|no such file or directory|dubious ownership|must be run in a work tree/i.test(r.stderr) ? 'none' : 'failed';
+}
+
+async function locate(cwd: string): Promise<Located | 'none' | 'failed'> {
   const r = await git(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir', '--show-toplevel'], 5000);
-  if (!r.ok) return undefined;
+  if (!r.ok) return locateFailure(r);
   const [commonDir = '', toplevel = ''] = r.stdout.split('\n');
-  if (!commonDir || !toplevel) return undefined;
+  // A bare repository has no toplevel: nothing to show for it.
+  if (!commonDir || !toplevel) return 'none';
   // A normal repository or worktree shares <main checkout>/.git. Anything else (a submodule's .git/modules/x,
   // a bare repository) has no main checkout to point at, so the worktree itself is the project.
   const root = basename(commonDir) === '.git' ? dirname(commonDir) : toplevel;
   return { root: await real(root), toplevel: await real(toplevel) };
 }
 
+const exists = (p: string) =>
+  stat(p).then(
+    () => true,
+    () => false,
+  );
+
+/** The nearest existing ancestor of a missing directory, below the filesystem root. */
+async function existingAncestor(path: string): Promise<string | undefined> {
+  for (let dir = dirname(path); dir !== dirname(dir); dir = dirname(dir)) if (await exists(dir)) return dir;
+  return undefined;
+}
+
+/** The project root, or undefined when git failed and could not tell. A directory that is gone (a removed
+ *  worktree, typically <root>/.claude/worktrees/<name>) resolves through its nearest existing ancestor, as git
+ *  would have resolved it while it existed. */
+async function resolveRoot(cwd: string): Promise<string | undefined> {
+  const l = await locate(cwd);
+  if (l === 'failed') return undefined;
+  if (l !== 'none') return l.root;
+  if (await exists(cwd)) return cwd;
+  const above = await existingAncestor(cwd);
+  const la = above ? await locate(above) : 'none';
+  if (la === 'failed') return undefined;
+  return la === 'none' ? cwd : la.root;
+}
+
 const rootCache = new Map<string, Promise<string>>();
+// Every distinct session folder asks once on a cold start: without a limit that is a burst of git processes.
+const rootLimit = makeLimiter(8);
 
 /** The project a directory belongs to: the main checkout of its repository (a worktree resolves to the main
- *  checkout), or the directory itself outside git. Cached per directory. */
+ *  checkout), or the directory itself outside git. Cached per directory, except when git failed (a timeout): that
+ *  answer is the directory itself for now, and is asked again next time. */
 export function projectRootOf(cwd: string): Promise<string> {
-  let p = rootCache.get(cwd);
-  if (!p) {
-    p = locate(cwd).then((l) => l?.root ?? cwd);
-    rootCache.set(cwd, p);
-  }
+  // `git -C ''` would answer for the process's own working directory.
+  if (!isAbsolute(cwd)) return Promise.resolve(cwd);
+  const hit = rootCache.get(cwd);
+  if (hit) return hit;
+  const p = rootLimit(() => resolveRoot(cwd)).then((root) => {
+    if (root === undefined) rootCache.delete(cwd);
+    return root ?? cwd;
+  });
+  rootCache.set(cwd, p);
   return p;
 }
 
@@ -338,24 +398,44 @@ const STATUS_CONCURRENCY = 6;
 
 /** Worktrees and local branches of the repository the workspace is in. Items come without pr and with
  *  sessionIds: [] (the store fills both). Remote-only branches and detached worktrees are left out. */
-export async function readGit(
-  workspacePath: string,
-  now: number,
-): Promise<{ available: boolean; repoRoot?: string; defaultBranch?: string; items: WorkItem[] }> {
+export interface GitRead {
+  available: boolean;
+  repoRoot?: string;
+  /** Top of the worktree the workspace is in (the main checkout or a linked worktree). */
+  toplevel?: string;
+  defaultBranch?: string;
+  items: WorkItem[];
+}
+
+/** Thrown when git failed in a way that says nothing about the repository (a timeout): the store keeps the
+ *  last result instead of showing a repository with no branches, or none at all. */
+export class GitReadError extends Error {}
+
+const failedRun = (what: string, r: RunResult) =>
+  new GitReadError(`git ${what} failed${r.timedOut ? ' (timed out)' : ''}: ${r.stderr.trim().split('\n')[0] ?? ''}`);
+
+export async function readGit(workspacePath: string, now: number): Promise<GitRead> {
   const loc = await locate(workspacePath);
-  if (!loc) return { available: false, items: [] };
+  if (loc === 'failed') throw new GitReadError(`git could not tell whether ${workspacePath} is in a repository`);
+  if (loc === 'none') return { available: false, items: [] };
   rootCache.set(workspacePath, Promise.resolve(loc.root));
   const repoRoot = loc.root;
+  const base = { available: true, repoRoot, toplevel: loc.toplevel };
 
   const [wtList, refs, mainHead] = await Promise.all([
     git(repoRoot, ['worktree', 'list', '--porcelain']),
-    listRefs(repoRoot),
+    git(repoRoot, ['for-each-ref', '--format=%(refname)%09%(symref)', 'refs/heads', 'refs/remotes']),
     git(repoRoot, ['symbolic-ref', '-q', '--short', 'HEAD'], 3000),
   ]);
-  const worktrees = wtList.ok ? parseWorktreeList(wtList.stdout).filter((w) => !w.bare) : [];
-  const def = refs ? resolveDefault(refs, mainHead.ok ? mainHead.stdout.trim() : undefined) : undefined;
-  if (!refs || !def) return { available: true, repoRoot, defaultBranch: def?.branch, items: [] };
-  const pushed = pushedBranches(refs);
+  // The repository was found a moment ago, so these failing is not an answer: an empty board would be wrong.
+  if (!wtList.ok) throw failedRun('worktree list', wtList);
+  if (!refs.ok) throw failedRun('for-each-ref', refs);
+  const worktrees = parseWorktreeList(wtList.stdout).filter((w) => !w.bare);
+  const refList = parseRefList(refs.stdout);
+  const def = resolveDefault(refList, mainHead.ok ? mainHead.stdout.trim() : undefined);
+  // No default branch (a repository with no commit yet): nothing to measure branches against.
+  if (!def) return { ...base, items: [] };
+  const pushed = pushedBranches(refList);
 
   const withBranch = worktrees.filter((w) => w.branch);
   const [state, statuses, paths] = await Promise.all([
@@ -363,10 +443,10 @@ export async function readGit(
     mapLimit(withBranch, STATUS_CONCURRENCY, worktreeStatus),
     Promise.all(withBranch.map((w) => real(w.path))),
   ]);
-  if (!state) return { available: true, repoRoot, defaultBranch: def.branch, items: [] };
+  if (!state) throw new GitReadError('git for-each-ref refs/heads failed');
 
-  const byBranch = new Map<string, { path: string; status: WorktreeStatus }>();
-  withBranch.forEach((w, i) => byBranch.set(w.branch as string, { path: paths[i] as string, status: statuses[i] as WorktreeStatus }));
+  const byBranch = new Map<string, { path: string; status: WorktreeStatus; locked: boolean }>();
+  withBranch.forEach((w, i) => byBranch.set(w.branch as string, { path: paths[i] as string, status: statuses[i] as WorktreeStatus, locked: w.locked }));
 
   const items: WorkItem[] = state.branches.map((b) => {
     const isDefault = b.branch === def.branch;
@@ -376,7 +456,8 @@ export async function readGit(
     const counts = isDefault ? state.counts.defaultVsRemote : state.counts.vsBase.get(b.branch);
     const [ahead, behind] = counts ?? [0, 0];
     const dirtyCount = status?.dirtyCount ?? 0;
-    const unknown = Boolean(status?.unknown) || (!isDefault && !counts);
+    // A locked worktree (Claude Code locks the one an agent is working in) is never offered for cleaning.
+    const unknown = Boolean(status?.unknown) || (!isDefault && !counts) || Boolean(wt?.locked && !status?.missing);
     const item: WorkItem = {
       branch: b.branch,
       isDefault,
@@ -394,7 +475,7 @@ export async function readGit(
     return item;
   });
 
-  return { available: true, repoRoot, defaultBranch: def.branch, items: sortItems(items) };
+  return { ...base, defaultBranch: def.branch, items: sortItems(items) };
 }
 
 // ───────────────────────────── recentCommits ─────────────────────────────

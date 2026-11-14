@@ -87,6 +87,8 @@ export class Store implements vscode.Disposable {
   private visible = false;
   private gitDirty = false;
   private workspaceProjectKey: string | undefined;
+  /** The repository the GitHub result is for. */
+  private githubRoot: string | undefined;
   /** sessionId → the terminal it runs in, from the last claude refresh. */
   private terminalOf = new Map<string, vscode.Terminal>();
 
@@ -127,7 +129,12 @@ export class Store implements vscode.Disposable {
       async () => {
         await this.firstGit;
         const root = this.git.value?.git.repoRoot;
-        return root ? loadGithub(root) : { prs: [], ciRuns: [] };
+        if (!root) return { prs: [], ciRuns: [] };
+        // The last lists stand in for any gh could not read this time, unless they were another repository's.
+        const prev = root === this.githubRoot ? this.github.value : undefined;
+        const next = await loadGithub(root, prev);
+        this.githubRoot = root;
+        return next;
       },
       changed,
       opts.log,
@@ -160,6 +167,11 @@ export class Store implements vscode.Disposable {
   /** Every source once, now; resolves when all have finished. */
   async refresh(): Promise<void> {
     await Promise.all([this.claude.run(), this.git.run().then(() => this.github.run())]);
+  }
+
+  /** Claude sessions and git together, without waiting on GitHub. */
+  async refreshLocal(): Promise<void> {
+    await Promise.all([this.claude.run(), this.git.run()]);
   }
 
   /** Git only (after a change made from Cockpit, such as removing worktrees). */

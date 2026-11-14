@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parseChangelog, parseLatestTag, parseRoadmap, readReleases, versionFrom } from '../src/data/releases';
+import { loadGit } from '../src/sources';
 
 const dir = join(__dirname, 'fixtures/releases');
 const fixture = (name: string) => readFileSync(join(dir, name), 'utf8');
@@ -37,6 +38,14 @@ describe('parseRoadmap', () => {
     expect(plans[1]).toMatchObject({ target: 'December', status: 'planned', items: [{ text: 'Card checkout in USD', done: false }, { text: 'Payouts', done: false }] });
     expect(plans[2]?.items).toEqual([]);
     expect(plans[3]).toMatchObject({ status: 'planned', items: [{ text: 'Numbered items work too', done: false }] });
+  });
+
+  it('skips numbered section headings and anything inside code fences', () => {
+    expect(parseRoadmap('## 1. Foundations\n- a\n## 2) Later\n- b\n')).toEqual([]);
+    expect(parseRoadmap('## v2 — Big\n```md\n## 9.9.9 fake\n- [ ] not an item\n```\n- [x] real\n~~~\n## 8.8 fake\n~~~\n')).toEqual([
+      { version: '2', title: 'Big', items: [{ text: 'real', done: true }] },
+    ]);
+    expect(parseChangelog('## 1.0.0\n- kept\n````\n```\n## 9.9.9\n- example\n````\n- also kept\n')).toEqual([{ version: '1.0.0', lines: ['kept', 'also kept'] }]);
   });
 
   it('skips non-version headings and their items, and tolerates junk', () => {
@@ -134,6 +143,23 @@ describe('readReleases on a real repository', () => {
     expect(r.latestTagAt).toBeGreaterThan(0);
     expect(r.roadmap).toHaveLength(4);
     expect(r.changelog).toEqual([]);
+  });
+
+  it('reads the files of the worktree that is open, and the tags of the repository', async () => {
+    const repo = join(base, 'with-worktree');
+    mkdirSync(repo);
+    writeFileSync(join(repo, 'package.json'), '{ "version": "1.0.0" }\n');
+    writeFileSync(join(repo, 'CHANGELOG.md'), '## Unreleased\n- main line\n');
+    sh(repo, ['init', '-q', '-b', 'main']);
+    commit(repo, 'one');
+    sh(repo, ['tag', 'v1.0.0']);
+    const wt = join(base, 'with-worktree-feat');
+    sh(repo, ['worktree', 'add', '-q', '-b', 'feat', wt]);
+    writeFileSync(join(wt, 'package.json'), '{ "version": "2.0.0" }\n');
+    writeFileSync(join(wt, 'CHANGELOG.md'), '## Unreleased\n- feature line\n');
+    const { releases } = await loadGit(wt, Date.now());
+    expect(releases).toMatchObject({ currentVersion: '2.0.0', latestTag: 'v1.0.0', changelog: [{ version: 'Unreleased', lines: ['feature line'] }] });
+    expect((await loadGit(repo, Date.now())).releases).toMatchObject({ currentVersion: '1.0.0', changelog: [{ lines: ['main line'] }] });
   });
 
   it('is unavailable with nothing to show, and works outside git', async () => {

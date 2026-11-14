@@ -1,5 +1,6 @@
 // GitHub adapter: pull requests and CI runs through the gh CLI, on the person's existing login.
-// gh missing, logged out, no GitHub remote or offline: never throws; empty lists and a short githubNote.
+// gh missing, logged out, no GitHub remote or offline: never throws; the lists it could not read are left out,
+// with a short githubNote (the store then keeps the last lists it had).
 import type { CheckSummary, CiRun, PullRequest } from '../model';
 import { run, type RunResult } from './git';
 
@@ -161,15 +162,23 @@ export function ghNote(r: Pick<RunResult, 'stderr' | 'code' | 'timedOut'>): stri
 
 // ───────────────────────────── readGithub ─────────────────────────────
 
+export interface GithubRead {
+  github?: string;
+  githubNote?: string;
+  /** Absent when gh could not list them (as opposed to an empty list). */
+  prs?: PullRequest[];
+  ciRuns?: CiRun[];
+}
+
 /** The repository's GitHub name, its recent pull requests (open, merged and closed, newest first as gh lists
  *  them) and its latest CI runs. The three gh calls run together. */
-export async function readGithub(repoRoot: string): Promise<{ github?: string; githubNote?: string; prs: PullRequest[]; ciRuns: CiRun[] }> {
+export async function readGithub(repoRoot: string): Promise<GithubRead> {
   const [repo, prs, runs] = await Promise.all([
     gh(repoRoot, ['repo', 'view', '--json', 'nameWithOwner']),
     gh(repoRoot, ['pr', 'list', '--state', 'all', '--limit', String(PR_LIMIT), '--json', PR_FIELDS]),
     gh(repoRoot, ['run', 'list', '--limit', String(RUN_LIMIT), '--json', RUN_FIELDS]),
   ]);
-  if (!repo.ok) return { githubNote: ghNote(repo), prs: [], ciRuns: [] };
+  if (!repo.ok) return { githubNote: ghNote(repo) };
 
   let github: string | undefined;
   try {
@@ -179,11 +188,10 @@ export async function readGithub(repoRoot: string): Promise<{ github?: string; g
     // Unparseable output leaves github unset; the lists below may still be good.
   }
   const failed = [prs, runs].find((r) => !r.ok);
-  const out: { github?: string; githubNote?: string; prs: PullRequest[]; ciRuns: CiRun[] } = {
-    prs: prs.ok ? parsePullRequests(prs.stdout) : [],
-    ciRuns: runs.ok ? parseRuns(runs.stdout) : [],
-  };
+  const out: GithubRead = {};
   if (github) out.github = github;
+  if (prs.ok) out.prs = parsePullRequests(prs.stdout);
+  if (runs.ok) out.ciRuns = parseRuns(runs.stdout);
   if (failed) out.githubNote = ghNote(failed);
   return out;
 }

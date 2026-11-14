@@ -204,7 +204,9 @@ export function Work(): JSX.Element {
               {work.defaultBranch}
             </span>
           )}
-          {work.github ? <span>{work.github}</span> : work.githubNote && <span class="muted">GitHub: {work.githubNote}</span>}
+          {work.github && <span>{work.github}</span>}
+          {/* Shown beside the name too: lists kept from an earlier answer, or one gh call that failed. */}
+          {work.githubNote && <span class="muted">GitHub: {work.githubNote}</span>}
         </>
       }
     >

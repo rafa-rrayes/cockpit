@@ -9,7 +9,8 @@
 //   - [ ] Seasons                     not done
 //   - [x] Video feed                  done
 //   - Comments                        a plain item counts as not done
-//   Headings that do not start with a version ("## Later") are skipped with their items. "*" and "+" bullets,
+//   Headings that do not start with a version ("## Later", "## 1. Foundations": a version has a dot or a "v")
+//   are skipped with their items. Lines inside ``` or ~~~ code fences are skipped in both files. "*" and "+" bullets,
 //   nested items and "### sub-headings" inside a release are accepted (the sub-heading itself is skipped).
 //
 // CHANGELOG.md
@@ -25,11 +26,29 @@ import { defaultRefs, runGit as git } from './git';
 
 // ───────────────────────────── Pure parsers ─────────────────────────────
 
-const VERSION = String.raw`v?(\d+(?:\.\d+)*(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)`;
+// "1.2", "1.2.0-rc.1", "v2"; not a bare number, which is how numbered section headings start.
+const VERSION = String.raw`(?:v(?=\d)|(?=\d+\.\d))(\d+(?:\.\d+)*(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)`;
 const ROADMAP_HEADING = new RegExp(String.raw`^\[?${VERSION}\]?\s*(?:[—–:-]\s*)?(.*)$`);
 const CHANGELOG_HEADING = new RegExp(String.raw`^\[?${VERSION}\]?\s*(.*)$`);
 const LIST_ITEM = /^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$/;
 const CHECKBOX = /^\[([ xX])\]\s*(.*)$/;
+
+/** Lines outside fenced code blocks: a fence closes with the same character, at least as many times. */
+function* outsideFences(text: string): Generator<string> {
+  let fence: string | undefined;
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      if (m?.[1] && m[1][0] === fence[0] && m[1].length >= fence.length && line.trim() === m[1]) fence = undefined;
+      continue;
+    }
+    if (m?.[1]) {
+      fence = m[1];
+      continue;
+    }
+    yield line;
+  }
+}
 
 /** Strips bold/italic markers around a "Key:" label: "**Target:** x" → "Target: x". */
 const unwrapLabel = (line: string) => line.replace(/^([*_]{1,2})(\w+:)\1/, '$2').replace(/^([*_]{1,2})(\w+)\1:/, '$2:');
@@ -37,7 +56,7 @@ const unwrapLabel = (line: string) => line.replace(/^([*_]{1,2})(\w+:)\1/, '$2')
 export function parseRoadmap(text: string): ReleasePlan[] {
   const out: ReleasePlan[] = [];
   let cur: ReleasePlan | undefined;
-  for (const raw of text.split(/\r?\n/)) {
+  for (const raw of outsideFences(text)) {
     const h2 = /^##(?!#)\s*(.*?)\s*#*\s*$/.exec(raw);
     if (h2) {
       const m = ROADMAP_HEADING.exec(h2[1] ?? '');
@@ -69,7 +88,7 @@ export function parseChangelog(text: string, limit = 5): ChangelogEntry[] {
   const all: ChangelogEntry[] = [];
   let cur: ChangelogEntry | undefined;
   let lastWasItem = false;
-  for (const raw of text.split(/\r?\n/)) {
+  for (const raw of outsideFences(text)) {
     const h2 = /^##(?!#)\s*(.*?)\s*#*\s*$/.exec(raw);
     if (h2) {
       cur = changelogHeading(h2[1] ?? '');
@@ -167,11 +186,13 @@ export const VERSION_SOURCES = ['package.json', 'app.json', 'app/app.json', 'pyp
 
 const readText = (path: string) => readFile(path, 'utf8').catch(() => undefined);
 
-export async function readReleases(repoRoot: string): Promise<Releases> {
+/** Manifests, ROADMAP.md and CHANGELOG.md from `dir` (the worktree open, whose files may be ahead of the main
+ *  checkout's); tags and commit counts from `repoRoot`. */
+export async function readReleases(dir: string, repoRoot = dir): Promise<Releases> {
   const [manifests, roadmapText, changelogText, tags] = await Promise.all([
-    Promise.all(VERSION_SOURCES.map((f) => readText(join(repoRoot, f)))),
-    readText(join(repoRoot, 'ROADMAP.md')),
-    readText(join(repoRoot, 'CHANGELOG.md')),
+    Promise.all(VERSION_SOURCES.map((f) => readText(join(dir, f)))),
+    readText(join(dir, 'ROADMAP.md')),
+    readText(join(dir, 'CHANGELOG.md')),
     // versionsort.suffix=- sorts v1.2.0-rc1 before v1.2.0.
     git(repoRoot, ['-c', 'versionsort.suffix=-', 'tag', '--list', 'v*', '--sort=-v:refname', '--format=%(refname:short)%09%(creatordate:unix)']),
   ]);

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ghNote, parsePullRequests, parseRuns, readGithub, runStatus, summarizeChecks } from '../src/data/github';
+import { loadGithub } from '../src/sources';
 
 const fixture = (name: string) => readFileSync(join(__dirname, 'fixtures/github', name), 'utf8');
 
@@ -128,18 +129,37 @@ describe('readGithub', () => {
     fakeGh(`case "$1" in repo) echo '{"nameWithOwner":"acme/shop"}';; pr) cat "${base}/pr.json";; run) echo 'HTTP 502: Bad Gateway' >&2; exit 1;; esac`);
     process.env.PATH = `${join(base, 'bin')}:${path ?? ''}`;
     const r = await readGithub(base);
-    expect(r).toMatchObject({ github: 'acme/shop', githubNote: 'gh failed: HTTP 502: Bad Gateway', ciRuns: [] });
+    expect(r).toMatchObject({ github: 'acme/shop', githubNote: 'gh failed: HTTP 502: Bad Gateway' });
     expect(r.prs).toHaveLength(5);
+    // Not an empty list: a list gh could not read, which the store fills with the last one it had.
+    expect(r.ciRuns).toBeUndefined();
   });
 
-  it('logged out: empty lists and a note', async () => {
+  it('logged out: no lists and a note', async () => {
     fakeGh(`echo 'To get started with GitHub CLI, please run:  gh auth login' >&2; exit 4`);
     process.env.PATH = `${join(base, 'bin')}:${path ?? ''}`;
-    expect(await readGithub(base)).toEqual({ githubNote: 'gh not logged in', prs: [], ciRuns: [] });
+    expect(await readGithub(base)).toEqual({ githubNote: 'gh not logged in' });
   });
 
-  it('gh missing: empty lists and a note', async () => {
+  it('gh missing: no lists and a note', async () => {
     process.env.PATH = join(base, 'empty');
-    expect(await readGithub(base)).toEqual({ githubNote: 'gh not installed', prs: [], ciRuns: [] });
+    expect(await readGithub(base)).toEqual({ githubNote: 'gh not installed' });
+  });
+
+  it('a failed read keeps the last good lists (the store passes them back), a good one replaces them', async () => {
+    fakeGh(`case "$1" in repo) echo '{"nameWithOwner":"acme/shop"}';; pr) cat "${base}/pr.json";; run) cat "${base}/run.json";; esac`);
+    process.env.PATH = `${join(base, 'bin')}:${path ?? ''}`;
+    const good = await loadGithub(base);
+    process.env.PATH = join(base, 'empty');
+    const offline = await loadGithub(base, good);
+    expect(offline).toEqual({ github: 'acme/shop', githubNote: 'gh not installed; showing the last answer', prs: good.prs, ciRuns: good.ciRuns });
+    expect(offline.prs).toHaveLength(5);
+    // Nothing to keep: the note as it is, and empty lists, also when it keeps failing.
+    const failed = await loadGithub(base);
+    expect(failed).toEqual({ githubNote: 'gh not installed', prs: [], ciRuns: [] });
+    expect(await loadGithub(base, failed)).toEqual(failed);
+    process.env.PATH = `${join(base, 'bin')}:${path ?? ''}`;
+    fakeGh(`case "$1" in repo) echo '{"nameWithOwner":"acme/shop"}';; pr) echo '[]';; run) echo '[]';; esac`);
+    expect(await loadGithub(base, good)).toEqual({ github: 'acme/shop', prs: [], ciRuns: [] });
   });
 });

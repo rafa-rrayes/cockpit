@@ -4,12 +4,14 @@ import { appendFileSync, cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { cleanPrompt, parseScriptMeta, readClaude, resetClaudeCache, type ReadClaudeOptions } from '../src/data/claude';
+import { cleanPrompt, NO_FOLDER_KEY, parseScriptMeta, readClaude, resetClaudeCache, type ReadClaudeOptions } from '../src/data/claude';
 import type { ClaudeSession } from '../src/model';
 
 const FIXTURE = join(__dirname, 'fixtures', 'claude');
 const NOW = 1794600000000;
 const ALIVE = new Set([101, 102, 103, 105]);
+/** When the fixture processes started: their pid files say so in startedAt and procStart. */
+const STARTED = 1794500000000;
 const ID = {
   busy: '11111111-1111-4111-8111-111111111111',
   waiting: '22222222-2222-4222-8222-222222222222',
@@ -38,6 +40,7 @@ const opts = (extra: Partial<ReadClaudeOptions> = {}): ReadClaudeOptions => ({
   endedSessionDays: 7,
   now: NOW,
   isPidAlive: (pid) => ALIVE.has(pid),
+  processStarts: async (pids) => new Map(pids.filter((p) => ALIVE.has(p)).map((p) => [p, STARTED])),
   ...extra,
 });
 
@@ -83,10 +86,28 @@ describe('live sessions', () => {
     expect(s?.subagents).toEqual([expect.objectContaining({ id: 'dddd000000000009', finished: true })]);
   });
 
-  it('checks pids with process.kill by default', async () => {
-    writeFileSync(join(dir, 'sessions', `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: ID.old, cwd: '/work/demo', status: 'idle', updatedAt: NOW }));
-    const s = await read({ isPidAlive: undefined });
-    expect(s[ID.old]).toMatchObject({ live: true, status: 'idle' });
+  it('checks pids with process.kill and their start times with ps by default', async () => {
+    const pidFile = join(dir, 'sessions', `${process.pid}.json`);
+    writeFileSync(pidFile, JSON.stringify({ pid: process.pid, sessionId: ID.old, cwd: '/work/demo', status: 'idle', startedAt: Date.now(), updatedAt: Date.now() }));
+    const defaults = { isPidAlive: undefined, processStarts: undefined, endedSessionDays: 30 };
+    expect((await read(defaults))[ID.old]).toMatchObject({ live: true, status: 'idle' });
+    // The same pid, but the file says its process started long before this one: an earlier process's file.
+    writeFileSync(pidFile, JSON.stringify({ pid: process.pid, sessionId: ID.old, cwd: '/work/demo', status: 'idle', procStart: 'Mon Jan  5 10:00:00 2026', updatedAt: Date.now() }));
+    expect((await read(defaults))[ID.old]).toMatchObject({ live: false, status: 'ended' });
+  });
+
+  it('treats a pid file as ended when its pid now belongs to a later process', async () => {
+    const later = (pids: number[]) => new Map(pids.filter((p) => ALIVE.has(p)).map((p) => [p, p === 102 ? STARTED + 3_600_000 : STARTED]));
+    const s = await read({ processStarts: async (pids) => later(pids) });
+    expect(s[ID.waiting]).toMatchObject({ live: false, status: 'ended' });
+    expect(s[ID.waiting]?.waitingFor).toBeUndefined();
+    expect(s[ID.busy]).toMatchObject({ live: true, status: 'busy' });
+    // A file without procStart is judged by startedAt: it cannot belong to a process that started after it.
+    writeFileSync(join(dir, 'sessions', '101.json'), JSON.stringify({ pid: 101, sessionId: ID.busy, cwd: '/work/demo', status: 'busy', startedAt: STARTED - 86_400_000 }));
+    expect((await read())[ID.busy]).toMatchObject({ live: false, status: 'ended' });
+    // A pid that ps does not list has no process; without ps at all, the pid check is all there is.
+    expect((await read({ processStarts: async () => new Map() }))[ID.worktree]?.live).toBe(false);
+    expect((await read({ processStarts: async () => undefined }))[ID.worktree]?.live).toBe(true);
   });
 
   it('sorts live sessions first, then by last activity', async () => {
@@ -154,6 +175,34 @@ describe('transcripts', () => {
     // The first prompt is in the head, but a gap separates it from the tail: it is not "recent".
     expect(s?.recentPrompts).toEqual(['Recent prompt B', 'Recent prompt A']);
     expect(s?.startedAt).toBe(Date.parse('2026-11-13T09:00:00.000Z'));
+  });
+
+  it('falls back to the last prompt when the tail read holds no prompt', async () => {
+    const id = 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd';
+    const path = join(dir, 'projects', '-work-big', `${id}.jsonl`);
+    mkdirSync(join(dir, 'projects', '-work-big'));
+    const filler = `${JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'y'.repeat(8000), tool_use_id: 't' }] }, toolUseResult: {}, cwd: '/work/big' })}\n`;
+    writeFileSync(path, humanLine(id, 'Port the importer to the new schema'));
+    appendFileSync(path, filler.repeat(700));
+    appendFileSync(path, `${JSON.stringify({ type: 'last-prompt', lastPrompt: 'Port the importer to the new schema', sessionId: id })}\n`);
+    expect((await read())[id]?.recentPrompts).toEqual(['Port the importer to the new schema']);
+  });
+
+  it('gives a session with no cwd the folder its project directory is named after, when another session shows it', async () => {
+    const lone = 'efefefef-efef-4fef-8fef-efefefefefef';
+    const sibling = 'abcdabcd-abcd-4bcd-8bcd-abcdabcdabcd';
+    const wandered = 'bcdebcde-bcde-4cde-8cde-bcdebcdebcde';
+    writeFileSync(transcript('-work-demo', sibling), `${JSON.stringify({ type: 'custom-title', customTitle: 'Notes only', sessionId: sibling })}\n`);
+    mkdirSync(join(dir, 'projects', '-work-nowhere'));
+    writeFileSync(join(dir, 'projects', '-work-nowhere', `${lone}.jsonl`), `${JSON.stringify({ type: 'ai-title', aiTitle: 'Metadata only', sessionId: lone })}\n`);
+    // A neighbour that moved elsewhere with `cd` does not say where the directory's sessions started.
+    writeFileSync(join(dir, 'projects', '-work-nowhere', `${wandered}.jsonl`), humanLine(wandered, 'Look in the sibling folder').replace('/work/big', '/work/nowhere-else'));
+    const asked: string[] = [];
+    const s = await read({ resolveProjectKey: async (cwd) => (asked.push(cwd), `${cwd}-root`) });
+    expect(s[sibling]).toMatchObject({ cwd: '', projectKey: '/work/demo-root' });
+    expect(s[wandered]?.projectKey).toBe('/work/nowhere-else-root');
+    expect(s[lone]).toMatchObject({ cwd: '', projectKey: NO_FOLDER_KEY });
+    expect(asked).not.toContain('');
   });
 
   it('reads only what was appended, including a line that was incomplete on the previous read', async () => {
@@ -239,6 +288,13 @@ describe('subagents and workflows', () => {
     expect(s?.title).toBe('Importer port');
     expect(s?.workflows).toEqual([expect.objectContaining({ runId: 'wf_0000run-ddd', status: 'unknown', name: 'importer-port', phases: [{ title: 'Port', detail: undefined }] })]);
     expect(s?.subagents).toEqual([expect.objectContaining({ id: 'eeee000000000001', workflowRunId: 'wf_0000run-ddd', finished: true })]);
+  });
+
+  it('marks finished a subagent left behind by an earlier process of a resumed session', async () => {
+    const agent = join(dir, 'projects', '-work-demo', ID.busy, 'subagents', 'agent-aaaa000000000002.jsonl');
+    setMtime(agent, STARTED - 86_400_000); // last written before the live process started
+    const sub = (await read())[ID.busy]?.subagents.find((a) => a.id === 'aaaa000000000002');
+    expect(sub).toMatchObject({ finished: true });
   });
 
   it('does not report as running a run from an earlier process of a resumed session', async () => {
