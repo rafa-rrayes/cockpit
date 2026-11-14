@@ -1,0 +1,11 @@
+[build-system]
+requires = ["hatchling"]
+version = "9.9.9"
+
+[project]
+name = "shop-core"  # the API
+version = "0.4.2"
+dependencies = ["fastapi"]
+
+[tool.ruff]
+line-length = 120

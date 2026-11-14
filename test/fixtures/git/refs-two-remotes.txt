@@ -1,0 +1,6 @@
+refs/heads/feature	
+refs/heads/main	
+refs/remotes/fork/HEAD	refs/remotes/fork/main
+refs/remotes/fork/main	
+refs/remotes/upstream/HEAD	refs/remotes/upstream/trunk
+refs/remotes/upstream/trunk	

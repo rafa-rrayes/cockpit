@@ -1,0 +1,22 @@
+worktree /home/dev/acme
+HEAD 1111111111111111111111111111111111111111
+branch refs/heads/main
+
+worktree /home/dev/acme/.claude/worktrees/search-filters
+HEAD 2222222222222222222222222222222222222222
+branch refs/heads/search-filters
+
+worktree /home/dev/acme/.claude/worktrees/agent-a1b2c3d4e5f6a7b8c
+HEAD 3333333333333333333333333333333333333333
+branch refs/heads/worktree-agent-a1b2c3d4e5f6a7b8c
+locked
+
+worktree /home/dev/acme/.claude/worktrees/spike
+HEAD 4444444444444444444444444444444444444444
+detached
+
+worktree /home/dev/acme/.claude/worktrees/gone
+HEAD 5555555555555555555555555555555555555555
+branch refs/heads/gone
+prunable gitdir file points to non-existent location
+

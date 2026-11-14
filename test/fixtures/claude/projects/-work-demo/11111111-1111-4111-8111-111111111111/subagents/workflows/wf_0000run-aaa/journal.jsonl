@@ -1,0 +1,4 @@
+{"type":"launched"}
+{"type":"started","key":"v2:fixture1","agentId":"bbbb000000000001","label":"design","phase":"Design"}
+{"type":"result","key":"v2:fixture1","agentId":"bbbb000000000001","result":"Design written.","toolsUsed":["Read","Write"]}
+{"type":"started","key":"v2:fixture2","agentId":"bbbb000000000002","label":"build:ui","phase":"Build"}

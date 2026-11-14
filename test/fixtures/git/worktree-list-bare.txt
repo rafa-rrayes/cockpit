@@ -1,0 +1,7 @@
+worktree /home/dev/widget.git
+bare
+
+worktree /home/dev/widget/main
+HEAD 6666666666666666666666666666666666666666
+branch refs/heads/main
+

@@ -1,0 +1,5 @@
+ M src/app.ts
+M  README.md
+R  old-name.ts -> new-name.ts
+?? notes/
+?? "with space\303\251.txt"
