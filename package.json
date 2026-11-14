@@ -6,32 +6,84 @@
   "publisher": "rrayes",
   "private": true,
   "license": "UNLICENSED",
-  "engines": { "vscode": "^1.100.0" },
-  "categories": ["Other"],
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
   "main": "./dist/extension.js",
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished",
+    "onWebviewPanel:cockpit.overview"
+  ],
   "contributes": {
     "commands": [
-      { "command": "cockpit.open", "title": "Cockpit: Open" },
-      { "command": "cockpit.refresh", "title": "Cockpit: Refresh" }
+      {
+        "command": "cockpit.open",
+        "title": "Open",
+        "category": "Cockpit",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "cockpit.refresh",
+        "title": "Refresh",
+        "category": "Cockpit",
+        "icon": "$(refresh)"
+      }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cockpit",
+          "title": "Cockpit",
+          "icon": "media/cockpit.svg"
+        }
+      ]
+    },
+    "views": {
+      "cockpit": [
+        {
+          "id": "cockpit.home",
+          "name": "Overview"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "cockpit.home",
+        "contents": "Cockpit shows every Claude Code session on this machine, with the worktrees, pull requests, CI and releases of this project, in the editor area.\n[Open Cockpit](command:cockpit.open)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "cockpit.refresh",
+          "when": "view == cockpit.home",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "Cockpit",
       "properties": {
         "cockpit.openOnStartup": {
           "type": "boolean",
           "default": true,
-          "description": "Open Cockpit in the editor area when a window starts."
+          "markdownDescription": "Open Cockpit as the first, pinned tab when a window starts. Files you had open stay open beside it. Pair it with `#workbench.startupEditor#`: `none` so the Welcome page does not open too."
         },
         "cockpit.endedSessionDays": {
           "type": "number",
           "default": 7,
+          "minimum": 0,
+          "maximum": 90,
           "description": "How many days of ended Claude sessions to show."
         },
         "cockpit.githubPollSeconds": {
           "type": "number",
           "default": 60,
-          "description": "How often to ask GitHub (through gh) for pull requests and CI runs while Cockpit is visible."
+          "minimum": 15,
+          "description": "How often to ask GitHub (through gh) for pull requests and CI runs while Cockpit is visible. Nothing is asked while it is hidden."
         }
       }
     }
@@ -41,8 +93,9 @@
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit -p . && tsc --noEmit -p webview",
     "test": "vitest run",
-    "smoke": "node test/smoke/run.mjs",
-    "package": "npm run build && vsce package --no-dependencies"
+    "smoke": "npm run build && node test/smoke/run.mjs",
+    "dump-state": "node dist/dump-state.js",
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository --skip-license"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

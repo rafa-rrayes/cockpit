@@ -1,5 +1,6 @@
-// Two bundles: the extension host (node, CommonJS, `vscode` external) and the webview (browser, Preact).
-// `dist/dev.html` runs the webview in a plain browser against the sample State, for screenshots and UI work.
+// Bundles: the extension host (node, CommonJS, `vscode` external), the webview (browser, Preact), the browser
+// preview (`dist/dev.html` runs the webview against the sample State or a dumped one) and the dump-state script
+// (node, no `vscode`: prints the State for a folder, see scripts/dump-state.ts).
 import * as esbuild from 'esbuild';
 import { copyFileSync, mkdirSync } from 'node:fs';
 
@@ -11,6 +12,7 @@ const builds = [
   { ...common, entryPoints: ['src/extension.ts'], outfile: 'dist/extension.js', platform: 'node', format: 'cjs', target: 'node20', external: ['vscode'] },
   { ...common, entryPoints: ['webview/main.tsx'], outfile: 'dist/webview.js', platform: 'browser', format: 'iife', target: 'es2022', jsx: 'automatic', jsxImportSource: 'preact', loader: { '.css': 'css' } },
   { ...common, entryPoints: ['webview/dev.ts'], outfile: 'dist/dev.js', platform: 'browser', format: 'iife', target: 'es2022' },
+  { ...common, entryPoints: ['scripts/dump-state.ts'], outfile: 'dist/dump-state.js', platform: 'node', format: 'cjs', target: 'node20' },
 ];
 
 const copyStatic = () => copyFileSync('webview/dev.html', 'dist/dev.html');
