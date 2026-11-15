@@ -1,0 +1,30 @@
+name: Bug report
+description: Something in Cockpit doesn't work as described
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you saw instead. A screenshot helps.
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Cockpit, VS Code and Claude Code versions, and your OS
+      placeholder: Cockpit 0.3.2 · VS Code 1.106 · Claude Code 2.4 · macOS 26
+    validations:
+      required: true
+  - type: dropdown
+    id: delivery
+    attributes:
+      label: Delivery mode (shown in the Work header)
+      options: [direct · local, direct · origin, pull requests, not sure]
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Anything from the "Cockpit" output channel or the developer console. Remove prompts or paths you don't want public.
+      render: text

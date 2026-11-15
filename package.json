@@ -20,6 +20,18 @@
   "categories": [
     "Other"
   ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "ai",
+    "agents",
+    "dashboard",
+    "git",
+    "worktree",
+    "github",
+    "kanban",
+    "roadmap"
+  ],
   "main": "./dist/extension.js",
   "activationEvents": [
     "onStartupFinished",
