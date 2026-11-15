@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.1 - 2026-11-14
+
 - Maximize: a button next to Refresh and **Cockpit: Maximize** (⌃⌘M, Ctrl+Alt+M on Windows and Linux) close the
   side bars, the panel and the other editor groups around the Cockpit tab, with VS Code's own commands; no setting
   changes. VS Code's usual keys bring each one back.
@@ -40,6 +42,8 @@
 - Needs you lists a Claude that stopped with uncommitted files in its worktree.
 - Ship's dialog lists the other board changes the commit carries besides the branch's own cards.
 - Tag makes an annotated tag (tagger, date, message), so `git describe` and `git push --follow-tags` see it.
+- Roadmap: a lane that is shipped and tagged folds to one line, below the Backlog, newest first; click it to open
+  its cards. A lane that says shipped but has no tag yet stays open, with its Tag button.
 
 ## 0.1.1 - 2026-11-13
 
