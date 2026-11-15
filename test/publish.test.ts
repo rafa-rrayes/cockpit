@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseChangelog } from '../src/data/releases';
 import { parseRoadmap } from '../src/data/roadmap';
 import { emptyState, type State, type WorkItem } from '../src/model';
-import { bumpVersion, compareVersions, datedChangelog, isReleaseVersion, mergedWork, otherBoardChanges, prBody, prTitle, releaseStep, roadmapCommitMessage, withMerged } from '../src/publish';
+import { bumpVersion, compareVersions, datedChangelog, isReleaseVersion, mergedWork, otherBoardChanges, prBody, prTitle, isShipped, releaseStep, roadmapCommitMessage, withMerged } from '../src/publish';
 
 const card = (text: string, lane = '0.2.0') => ({ text, lane });
 
@@ -94,6 +94,16 @@ describe('releaseStep', () => {
     expect(releaseStep(lane('Backlog'), s())).toBeUndefined();
     expect(releaseStep(lane('0.1.0'), s({ latestTag: 'v0.1.0' }))).toBeUndefined();
     expect(releaseStep(lane('0.2.0'), s({ latestTag: 'v0.2.1' }))).toBeUndefined();
+  });
+
+  it('counts a lane as shipped once it says so and a tag at or after it exists', () => {
+    expect(isShipped(lane('0.1.0'), s({ latestTag: 'v0.1.0' }))).toBe(true);
+    expect(isShipped(lane('0.1.0'), s({ latestTag: 'v0.3.0' }))).toBe(true);
+    // Says shipped, not tagged yet: it keeps its Tag button.
+    expect(isShipped(lane('0.1.0'), s())).toBe(false);
+    // Tagged past it, but it does not say shipped.
+    expect(isShipped(lane('0.2.0'), s({ latestTag: 'v0.3.0' }))).toBe(false);
+    expect(isShipped(lane('Backlog'), s({ latestTag: 'v9.0.0' }))).toBe(false);
   });
 });
 

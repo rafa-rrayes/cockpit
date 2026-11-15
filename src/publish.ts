@@ -154,6 +154,13 @@ export function mergedWork(lanes: ReleasePlan[]): MergedWork {
  *  Nothing for the backlog, an empty lane, a lane with open cards, or one already tagged. */
 export type ReleaseStep = { step: 'release' } | { step: 'review'; pr: PullRequest } | { step: 'tag' };
 
+/** The lane is behind us: it says shipped (or released) and a tag at or after its version exists. The board folds it
+ *  to one line. A lane that says shipped but has no tag yet stays open: it still has its Tag button. */
+export function isShipped(lane: ReleasePlan, state: State): boolean {
+  const latest = state.releases.latestTag;
+  return !lane.backlog && isReleaseVersion(lane.version) && SHIPPED.test(lane.status ?? '') && latest !== undefined && compareVersions(latest, lane.version) >= 0;
+}
+
 export function releaseStep(lane: ReleasePlan, state: State): ReleaseStep | undefined {
   if (lane.backlog || lane.items.length === 0 || !isReleaseVersion(lane.version)) return undefined;
   const latest = state.releases.latestTag;

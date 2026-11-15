@@ -469,6 +469,15 @@ button.needs-item:hover { background: color-mix(in srgb, var(--tone) 12%, var(--
 .rm-lane-progress { display: flex; flex: 1; align-items: center; justify-content: flex-end; gap: 8px; min-width: 120px; }
 .rm-lane-progress .progress { flex: 0 1 120px; }
 .rm-lane-count { flex: 1; text-align: right; }
+.rm-shipped { margin-top: 4px; }
+.rm-shipped-head { margin: 0 0 4px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.7; }
+.rm-shipped-lane > summary { display: flex; align-items: baseline; gap: 10px; padding: 4px 6px; border-radius: 4px; cursor: pointer; }
+.rm-shipped-lane > summary:hover { background: var(--vscode-list-hoverBackground); }
+.rm-shipped-lane > summary::marker { content: ''; }
+.rm-shipped-lane > summary::before { content: '▸'; opacity: 0.7; }
+.rm-shipped-lane[open] > summary::before { content: '▾'; }
+.rm-shipped-count { margin-left: auto; font-size: 12px; }
+.rm-shipped-lane[open] > .rm-cells { margin: 4px 0 10px; }
 
 .rm-cells { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-items: stretch; }
 .rm-cell {

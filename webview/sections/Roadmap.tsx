@@ -5,7 +5,7 @@ import type { JSX, RefObject } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { ItemStatus, LaunchOptions, ReleasePlan, RoadmapEdit, RoadmapItem } from '../../src/model';
 import { nextMinor } from '../../src/data/roadmap';
-import { releaseStep, tagName } from '../../src/publish';
+import { compareVersions, isShipped, releaseStep, tagName } from '../../src/publish';
 import { EFFORTS, MAX_SUBAGENTS, MODELS } from '../../src/launch';
 import { useCockpit } from '../context';
 import { Icon, type IconName } from '../icons';
@@ -622,6 +622,67 @@ export function Roadmap(): JSX.Element {
   };
 
   const cards = r.roadmap.reduce((n, l) => n + l.items.length, 0);
+  // Shipped and tagged lanes fold to one line each, below the backlog, newest first.
+  const shipped = lanes.filter((l) => isShipped(l, state)).sort((a, b) => compareVersions(b.version, a.version));
+  const current = lanes.filter((l) => !shipped.includes(l));
+
+  const laneBody = (lane: ReleasePlan): JSX.Element => (
+    <div class="rm-cells">
+      {COLUMNS.map((col) => {
+        const items = lane.items.filter((i) => i.status === col.status);
+        const isOver = drag !== undefined && over?.lane === lane.version && over.status === col.status;
+        return (
+          <div
+            key={col.status}
+            class={isOver ? 'rm-cell rm-over' : 'rm-cell'}
+            onDragOver={(e) => {
+              if (drag === undefined) return;
+              e.preventDefault();
+              hover({ lane: lane.version, status: col.status });
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              drop({ lane: lane.version, status: col.status });
+            }}
+          >
+            <h4 class="rm-cell-head">
+              {col.label}
+              {items.length > 0 && <span class="count">{items.length}</span>}
+            </h4>
+            <ul class="rm-cards" aria-label={`${laneLabel(lane)}: ${col.label}`}>
+              {items.map((item) => (
+                <Card
+                  key={item.id}
+                  item={item}
+                  lane={lane}
+                  lanes={lanes}
+                  dragging={drag === item.id}
+                  dropBefore={isOver && over?.before === item.id && drag !== item.id}
+                  selected={selected.includes(item.id)}
+                  selectedCount={selected.length}
+                  edit={edit}
+                  onSelect={select}
+                  onStart={(at) => startFor(item.id, at)}
+                  onDragStart={setDrag}
+                  onDragEnd={endDrag}
+                  onDragOver={hover}
+                  onDrop={drop}
+                />
+              ))}
+            </ul>
+            {col.status === 'todo' &&
+              (adding === lane.version ? (
+                <LineInput label={`New card in ${laneLabel(lane)}`} placeholder="What needs doing?" keepOpen onCommit={(text) => edit({ op: 'add', lane: lane.version, text })} onClose={() => setAdding(undefined)} />
+              ) : (
+                <button type="button" class="rm-add" onClick={() => setAdding(lane.version)}>
+                  <Icon name="plus" /> Add card
+                </button>
+              ))}
+          </div>
+        );
+      })}
+    </div>
+  );
 
   return (
     <Section
@@ -665,66 +726,28 @@ export function Roadmap(): JSX.Element {
         />
       )}
       <div class="rm" onDragEnd={endDrag}>
-        {lanes.map((lane) => (
+        {current.map((lane) => (
           <section key={lane.version} class={lane.backlog ? 'rm-lane rm-backlog' : 'rm-lane'} aria-label={laneLabel(lane)}>
             <LaneHead lane={lane} />
-            <div class="rm-cells">
-              {COLUMNS.map((col) => {
-                const items = lane.items.filter((i) => i.status === col.status);
-                const isOver = drag !== undefined && over?.lane === lane.version && over.status === col.status;
-                return (
-                  <div
-                    key={col.status}
-                    class={isOver ? 'rm-cell rm-over' : 'rm-cell'}
-                    onDragOver={(e) => {
-                      if (drag === undefined) return;
-                      e.preventDefault();
-                      hover({ lane: lane.version, status: col.status });
-                    }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      drop({ lane: lane.version, status: col.status });
-                    }}
-                  >
-                    <h4 class="rm-cell-head">
-                      {col.label}
-                      {items.length > 0 && <span class="count">{items.length}</span>}
-                    </h4>
-                    <ul class="rm-cards" aria-label={`${laneLabel(lane)}: ${col.label}`}>
-                      {items.map((item) => (
-                        <Card
-                          key={item.id}
-                          item={item}
-                          lane={lane}
-                          lanes={lanes}
-                          dragging={drag === item.id}
-                          dropBefore={isOver && over?.before === item.id && drag !== item.id}
-                          selected={selected.includes(item.id)}
-                          selectedCount={selected.length}
-                          edit={edit}
-                          onSelect={select}
-                          onStart={(at) => startFor(item.id, at)}
-                          onDragStart={setDrag}
-                          onDragEnd={endDrag}
-                          onDragOver={hover}
-                          onDrop={drop}
-                        />
-                      ))}
-                    </ul>
-                    {col.status === 'todo' &&
-                      (adding === lane.version ? (
-                        <LineInput label={`New card in ${laneLabel(lane)}`} placeholder="What needs doing?" keepOpen onCommit={(text) => edit({ op: 'add', lane: lane.version, text })} onClose={() => setAdding(undefined)} />
-                      ) : (
-                        <button type="button" class="rm-add" onClick={() => setAdding(lane.version)}>
-                          <Icon name="plus" /> Add card
-                        </button>
-                      ))}
-                  </div>
-                );
-              })}
-            </div>
+            {laneBody(lane)}
           </section>
         ))}
+        {shipped.length > 0 && (
+          <section class="rm-shipped" aria-label="Shipped">
+            <h3 class="rm-shipped-head">Shipped</h3>
+            {shipped.map((lane) => (
+              <details key={lane.version} class="rm-shipped-lane">
+                <summary>
+                  <span class="mono">{lane.version}</span>
+                  {lane.title && <span class="rm-lane-title">{lane.title}</span>}
+                  {r.latestTag?.replace(/^v/, '') === lane.version && <span class="mono muted">{tagName(lane.version)}</span>}
+                  <span class="muted rm-shipped-count">{lane.items.length === 1 ? '1 card' : `${lane.items.length} cards`}</span>
+                </summary>
+                {laneBody(lane)}
+              </details>
+            ))}
+          </section>
+        )}
       </div>
       {launch && launchCards.length > 0 && (
         <Launcher
