@@ -107,6 +107,9 @@ button { font: inherit; color: inherit; }
 }
 .btn-primary:hover { background: var(--vscode-button-hoverBackground, #026ec1); }
 .btn-small { padding: 1px 8px; font-size: 12px; }
+/* Unavailable, but still says why on hover and stays reachable by keyboard. */
+.btn[aria-disabled='true'] { opacity: 0.5; cursor: default; }
+.btn[aria-disabled='true']:hover { background: var(--vscode-button-secondaryBackground, #313131); }
 .btn-icon {
   padding: 3px;
   border: 1px solid transparent;
@@ -450,6 +453,11 @@ button.needs-item:hover { background: color-mix(in srgb, var(--tone) 12%, var(--
 
 .rm { display: grid; gap: 12px; }
 .rm-none { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.rm-none code, .rm-cli code { font-family: var(--mono); font-size: 0.95em; }
+.rm-cli { display: flex; align-items: center; gap: 6px; margin: -4px 0 10px; font-size: 12px; }
+.rm-cli .icon { flex: none; width: 14px; height: 14px; }
+.rm-cli .btn-icon { color: var(--muted); }
+.rm-cli .btn-icon .icon { width: 14px; height: 14px; }
 .rm-lane {
   min-width: 0;
   padding: 8px;
@@ -1071,6 +1079,12 @@ body.vscode-high-contrast button.act-row:hover { outline: 1px dashed var(--vscod
 .report-open li { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .report-open li > span:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .work-ship { display: flex; justify-content: flex-end; }
+.work-ship:empty { display: none; }
+.finish-blocked { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 0; }
+.cu-actions .finish-blocked { align-items: flex-start; }
+.finish-why { font-size: 11px; overflow-wrap: anywhere; }
+.rm-branch .finish { margin-left: auto; padding: 0 6px; font-size: 11px; }
+.rm-branch .finish .icon { width: 12px; height: 12px; }
 .rm-release-step { display: inline-flex; align-items: center; gap: 4px; }
 
 .ci-running { margin: 12px 0; }

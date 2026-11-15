@@ -1,5 +1,5 @@
 // The roadmap as a board: a lane per release (and the backlog), a column per status. Every change is posted to
-// the host, which edits ROADMAP.md; the board redraws from the State that comes back. Open cards can be selected
+// the host, which edits the board's file; the board redraws from the State that comes back. Open cards can be selected
 // (Cmd/Ctrl-click) and handed to a new Claude from their right-click menu.
 import type { JSX, RefObject } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
@@ -8,8 +8,13 @@ import { nextMinor } from '../../src/data/roadmap';
 import { compareVersions, isShipped, releaseStep, tagName } from '../../src/publish';
 import { EFFORTS, MAX_SUBAGENTS, MODELS } from '../../src/launch';
 import { useCockpit } from '../context';
+import { releaseAction } from '../format';
 import { Icon, type IconName } from '../icons';
-import { Chip, Section, useDismiss } from '../ui';
+import { Chip, FinishButton, Section, useDismiss } from '../ui';
+
+/** What the copy button next to the `cockpit` hint gives, for a project's CLAUDE.md. */
+const CLAUDE_LINE =
+  'To ship, merge or release, run `cockpit status`, then `cockpit ship` or `cockpit release <version>`: never do it by hand with git.';
 
 const COLUMNS: { status: ItemStatus; label: string }[] = [
   { status: 'todo', label: 'Planned' },
@@ -256,10 +261,12 @@ function Card({ item, lane, lanes, dragging, dropBefore, selected, selectedCount
   );
 }
 
-/** The branch working on a card, and its pull request once there is one. */
+/** The branch working on a card, its pull request once there is one, and the button that finishes it once it can
+ *  be: launch from a card, finish from the card. */
 function CardBranch({ branch }: { branch: string }): JSX.Element {
   const { state, post } = useCockpit();
-  const pr = state.work.items.find((i) => i.branch === branch)?.pr;
+  const item = state.work.items.find((i) => i.branch === branch);
+  const pr = item?.pr;
   return (
     <span class="rm-branch">
       <span class="mono rm-branch-name" title={`Branch ${branch}`}>
@@ -271,15 +278,27 @@ function CardBranch({ branch }: { branch: string }): JSX.Element {
           #{pr.number} {pr.state === 'open' ? 'in review' : pr.state}
         </button>
       )}
+      {item && <FinishButton item={item} readyOnly />}
     </span>
   );
 }
 
-/** The lane's next release step, when it has one: Release…, its open pull request, or Tag. */
+/** The lane's next release step, when it has one: Release…, its open pull request, or Tag. A lane that would be
+ *  ready but for its open cards shows Release… disabled, saying how many are done. */
 function ReleaseButton({ lane }: { lane: ReleasePlan }): JSX.Element | null {
   const { state, post } = useCockpit();
   const step = releaseStep(lane, state);
-  if (!step) return null;
+  if (!step) {
+    const allDone = { ...lane, items: lane.items.map((i) => ({ ...i, status: 'done' as const })) };
+    if (releaseStep(allDone, state)?.step !== 'release') return null;
+    const done = lane.items.filter((i) => i.status === 'done').length;
+    const face = releaseAction(state.work, lane.version, 'release');
+    return (
+      <button type="button" class="btn btn-small rm-release-step" aria-disabled="true" title={`${done} of ${lane.items.length} cards done: ${lane.version} can be released once every card is.`}>
+        <Icon name={face.icon} /> {face.label}
+      </button>
+    );
+  }
   if (step.step === 'review') {
     const { pr } = step;
     return (
@@ -288,16 +307,10 @@ function ReleaseButton({ lane }: { lane: ReleasePlan }): JSX.Element | null {
       </button>
     );
   }
-  if (step.step === 'tag') {
-    return (
-      <button type="button" class="btn btn-small btn-primary rm-release-step" title="Tags the merged release and pushes the tag, after a confirmation" onClick={() => post({ type: 'tag', version: lane.version })}>
-        <Icon name="tag" /> Tag {tagName(lane.version)}…
-      </button>
-    );
-  }
+  const face = releaseAction(state.work, lane.version, step.step);
   return (
-    <button type="button" class="btn btn-small btn-primary rm-release-step" title="Prepares the release pull request (version, changelog, roadmap), after showing it" onClick={() => post({ type: 'release', version: lane.version })}>
-      <Icon name="tag" /> Release {lane.version}…
+    <button type="button" class="btn btn-small btn-primary rm-release-step" title={face.title} onClick={() => post({ type: step.step, version: lane.version })}>
+      <Icon name={face.icon} /> {face.label}
     </button>
   );
 }
@@ -313,7 +326,6 @@ function LaneHead({ lane }: { lane: ReleasePlan }): JSX.Element {
       </h3>
       {lane.status && <Chip tone={statusTone(lane.status)}>{lane.status}</Chip>}
       {lane.target && <span class="muted">{lane.target}</span>}
-      <ReleaseButton lane={lane} />
       {lane.backlog ? (
         <span class="progress-text rm-lane-count">{total === 1 ? '1 card' : `${total} cards`}</span>
       ) : (
@@ -323,11 +335,12 @@ function LaneHead({ lane }: { lane: ReleasePlan }): JSX.Element {
               <span class="progress-fill" style={{ width: `${Math.round((done / total) * 100)}%` }} />
             </span>
             <span class="progress-text">
-              {done} of {total}
+              {done}/{total}
             </span>
           </span>
         )
       )}
+      <ReleaseButton lane={lane} />
     </header>
   );
 }
@@ -584,7 +597,9 @@ export function Roadmap(): JSX.Element {
     return (
       <Section id="roadmap" title="Roadmap">
         <div class="rm-none">
-          <p class="empty">No ROADMAP.md yet. The board keeps its cards there: a plain file that you, and any Claude, can also edit by hand.</p>
+          <p class="empty">
+            No roadmap yet. Cockpit keeps it in <code>{r.roadmapName ?? '.cockpit/roadmap.md'}</code>: a plain file that you, and any Claude, can also edit by hand.
+          </p>
           <button type="button" class="btn btn-primary" onClick={() => edit({ op: 'create' })}>
             Create roadmap
           </button>
@@ -688,7 +703,12 @@ export function Roadmap(): JSX.Element {
     <Section
       id="roadmap"
       title="Roadmap"
-      meta={<>{cards === 1 ? '1 card' : `${cards} cards`} · ROADMAP.md</>}
+      meta={
+        <>
+          {cards === 1 ? '1 card' : `${cards} cards`}
+          {r.roadmapName && <span class="mono">{r.roadmapName}</span>}
+        </>
+      }
       actions={
         <>
           {selected.length > 0 && (
@@ -712,12 +732,21 @@ export function Roadmap(): JSX.Element {
           <button type="button" class="btn btn-small" onClick={() => setAddingRelease(true)}>
             <Icon name="plus" /> Release
           </button>
-          <button type="button" class="btn btn-small" onClick={() => post({ type: 'openRoadmap' })}>
+          <button type="button" class="btn btn-small" title={`Open ${r.roadmapName ?? 'the roadmap'} in the editor`} onClick={() => post({ type: 'openRoadmap' })}>
             <Icon name="file" /> Open file
           </button>
         </>
       }
     >
+      <p class="rm-cli muted">
+        <Icon name="terminal" />
+        <span>
+          Claudes in this window's terminals can run <code>cockpit status</code>, <code>cockpit ship</code> and <code>cockpit release &lt;version&gt;</code>.
+        </span>
+        <button type="button" class="btn-icon" title="Copy a line for a project's CLAUDE.md that tells Claude to use them" aria-label="Copy a line for CLAUDE.md" onClick={() => post({ type: 'copy', text: CLAUDE_LINE })}>
+          <Icon name="copy" />
+        </button>
+      </p>
       {addingRelease && (
         <ReleaseForm
           suggested={suggestVersion(r.roadmap, r.currentVersion)}
