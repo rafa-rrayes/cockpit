@@ -26,6 +26,11 @@ Status: shipped
 - [x] The cockpit command a Claude runs: status, ship, release (brief B in /Users/Rafa/RRayes/cockpit/tasks/todo.md)
 - [x] UI follows the delivery mode and says why an action is unavailable (brief C in /Users/Rafa/RRayes/cockpit/tasks/todo.md)
 
+## 0.3.1
+Status: shipped
+
+- [x] Shipped lanes each show their own tag, not only the newest one
+
 ## Backlog
 
 - [ ] First real Ship → merge → Pull → Release → Tag against GitHub (only a fake gh so far)

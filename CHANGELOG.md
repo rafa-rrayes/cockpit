@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.1 - 2026-11-14
+
 - Shipped lanes each show their own tag (`v0.2.0`), not only the newest one's.
 
 ## 0.3.0 - 2026-11-14
