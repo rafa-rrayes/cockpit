@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseChangelog } from '../src/data/releases';
 import { parseRoadmap } from '../src/data/roadmap';
 import { emptyState, type State, type WorkItem } from '../src/model';
-import { bumpVersion, compareVersions, datedChangelog, isReleaseVersion, mergedWork, prBody, prTitle, releaseStep, roadmapCommitMessage, withMerged } from '../src/publish';
+import { bumpVersion, compareVersions, datedChangelog, isReleaseVersion, mergedWork, otherBoardChanges, prBody, prTitle, releaseStep, roadmapCommitMessage, withMerged } from '../src/publish';
 
 const card = (text: string, lane = '0.2.0') => ({ text, lane });
 
@@ -139,5 +139,14 @@ describe('withMerged and mergedWork', () => {
     const lane = s.releases.roadmap[0];
     if (!lane) throw new Error('no lane');
     expect(releaseStep(lane, s)).toEqual({ step: 'release' });
+  });
+});
+
+describe('otherBoardChanges', () => {
+  it('says nothing when there is nothing else, else how many and the first five', () => {
+    expect(otherBoardChanges([], 'origin/main')).toBe('');
+    expect(otherBoardChanges(['added "x" (Backlog, planned)'], 'origin/main')).toBe('It also carries 1 other board change, against ROADMAP.md on origin/main:\n- added "x" (Backlog, planned)');
+    const many = otherBoardChanges(['a', 'b', 'c', 'd', 'e', 'f', 'g'], 'origin/main');
+    expect(many).toBe('It also carries 7 other board changes, against ROADMAP.md on origin/main:\n- a\n- b\n- c\n- d\n- e\n- and 2 more');
   });
 });

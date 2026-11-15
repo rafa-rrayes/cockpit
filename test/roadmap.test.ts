@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { applyRoadmapEdit, finishBranch, finishMerged, linkCard, nextMinor, parseRoadmap, setLaneStatus, starterRoadmap } from '../src/data/roadmap';
+import { applyRoadmapEdit, boardChanges, finishBranch, finishMerged, linkCard, nextMinor, parseRoadmap, setLaneStatus, starterRoadmap } from '../src/data/roadmap';
 import { parseRoadmapEdit } from '../src/guards';
 import type { RoadmapEdit } from '../src/model';
 
@@ -269,5 +269,34 @@ describe('parseRoadmapEdit', () => {
     expect(parseRoadmapEdit({ op: 'add', lane: 'Backlog', text: 'x'.repeat(2000) })).toBeUndefined();
     expect(parseRoadmapEdit({ op: 'drop-table' })).toBeUndefined();
     expect(parseRoadmapEdit('add')).toBeUndefined();
+  });
+});
+
+describe('boardChanges', () => {
+  const FROM = '# Roadmap\n\n## 0.2.0\nStatus: planned\n\n- [ ] Card A\n- [ ] Card B\n- [ ] Card C\n- [ ] Same\n\n## 0.1.0\n\n- [x] Old\n\n## Backlog\n\n- [ ] Idea\n- [ ] Same\n';
+
+  it('is empty for the same board, and for changes to links and to skipped cards only', () => {
+    expect(boardChanges(FROM, FROM)).toEqual([]);
+    const linked = FROM.replace('- [ ] Card B', '- [ ] Card B <!-- cockpit:wb -->').replace('- [ ] Card A', '- [x] Card A');
+    expect(boardChanges(FROM, linked, ['Card A'])).toEqual([]);
+  });
+
+  it('lists releases added, removed or with a new status, then cards added, moved and removed', () => {
+    const to =
+      '# Roadmap\n\n## 0.2.0\nStatus: in progress\n\n- [x] Card A\n- [~] Card C\n- [ ] Same\n\n## 0.3.0\n\n- [ ] Card B\n- [ ] A new card with a long text that goes on and on past the limit\n\n## Backlog\n\n- [ ] Same\n';
+    expect(boardChanges(FROM, to, ['Card A'])).toEqual([
+      '0.2.0: status planned → in progress',
+      'added release 0.3.0',
+      'removed release 0.1.0',
+      '"Card C" planned → in progress',
+      '"Card B" 0.2.0 → 0.3.0',
+      'added "A new card with a long text that goes on and on…" (0.3.0, planned)',
+      'removed "Old" (0.1.0)',
+      'removed "Idea" (Backlog)',
+    ]);
+  });
+
+  it('counts every card as added when the base has no board yet', () => {
+    expect(boardChanges('', '## 0.2.0\n\n- [ ] x\n')).toEqual(['added release 0.2.0', 'added "x" (0.2.0, planned)']);
   });
 });

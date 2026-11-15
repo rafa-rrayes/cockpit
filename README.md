@@ -71,7 +71,8 @@ confirmation dialog, and does nothing if you cancel. If a step fails, a dialog s
   conflict). It commits `ROADMAP.md` as the board has it, with the branch's cards ticked and unlinked, pushes the
   branch and runs `gh pr create`. The title is the cards (or the last commit subject); the body lists the cards and
   the Claude's last answer as the report. So the board travels with the pull request, and the main checkout never
-  commits.
+  commits. It is the whole board, so the dialog also lists what else it changes against `origin/<default>`'s
+  `ROADMAP.md` (cards added, moved or removed, release status) besides the branch's own cards.
 - **Merged**: when a linked branch's pull request merged, the board shows its cards done; when a release pull
   request merged, its lane shows as shipped. `ROADMAP.md` is not touched then, so a plain `git pull` is not stopped
   by a change Cockpit made.

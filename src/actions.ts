@@ -12,13 +12,13 @@ import * as vscode from 'vscode';
 import { markOf, shipProblem } from './catchup';
 import { removeMerged } from './clean';
 import { runGh } from './data/github';
-import { type EditResult, applyRoadmapEdit, finishBranch, finishMerged, linkCard, parseRoadmap, setLaneStatus, starterRoadmap } from './data/roadmap';
+import { type EditResult, applyRoadmapEdit, boardChanges, finishBranch, finishMerged, linkCard, parseRoadmap, setLaneStatus, starterRoadmap } from './data/roadmap';
 import { cleanCandidates, isHttpsUrl, isSessionId, knownFolders, knownUrls, parseMessage } from './guards';
 import { type LaunchCard, launchArgs, launchEnv, sessionName, worktreeName } from './launch';
 import type { CatchUpMark, ClaudeSession, LaunchOptions, RoadmapEdit, State, WorkItem } from './model';
-import { type ShippedCard, mergedWork, prBody, prTitle, releaseBody, releaseBranch, releaseStep, releaseTitle, roadmapCommitMessage, tagName } from './publish';
+import { type ShippedCard, mergedWork, otherBoardChanges, prBody, prTitle, releaseBody, releaseBranch, releaseStep, releaseTitle, roadmapCommitMessage, tagName } from './publish';
 import { isProjectSetting, storedValue } from './settings';
-import { type Outcome, REMOTE, draftRelease, findRelease, openRelease, prsFrom, pullDefault, pushTag, remoteProblem, shipBranch } from './ship';
+import { type Outcome, REMOTE, baseRoadmap, draftRelease, findRelease, openRelease, prsFrom, pullDefault, pushTag, remoteProblem, shipBranch } from './ship';
 
 export interface ActionHost {
   state(): State | undefined;
@@ -329,7 +329,7 @@ async function tell(what: string, outcome: Outcome): Promise<void> {
 /** Pushes a finished branch and opens its pull request, after a confirmation that shows the title and the body. The
  *  board travels with it: ROADMAP.md as the main checkout has it, the branch's cards ticked and unlinked (and what
  *  merged since the last Pull finished too), is committed on the branch, so the merge brings it to the default branch
- *  and the main checkout never commits. */
+ *  and the main checkout never commits. That is the whole board, so the confirmation lists what else it changes. */
 async function ship(branch: string, host: ActionHost): Promise<void> {
   await host.refreshLocal();
   const state = host.state();
@@ -354,6 +354,11 @@ async function ship(branch: string, host: ActionHost): Promise<void> {
   }
   const merged = mergedWork(state.releases.roadmap);
   const roadmap = before === undefined ? undefined : finishBranch(finishMerged(before, merged), branch);
+  let others = '';
+  if (roadmap !== undefined) {
+    const onBase = await progress(`reading ${at.base}'s ROADMAP.md…`, () => baseRoadmap(at.repoRoot, at.base));
+    others = otherBoardChanges(boardChanges(onBase ?? '', roadmap, cards.map((c) => c.text)), `${REMOTE}/${at.base}`);
+  }
   const report = item.sessionIds.map((id) => state.sessions[id]?.report).find(Boolean);
   const title = prTitle(cards, item.lastCommitSubject ?? branch);
   const body = prBody(cards, report);
@@ -362,7 +367,8 @@ async function ship(branch: string, host: ActionHost): Promise<void> {
     `Pushes ${branch} to ${REMOTE} and opens a pull request into ${at.base}.`,
     roadmap === undefined
       ? ''
-      : `First it commits ROADMAP.md on the branch as the board has it now${cards.length ? `, with ${plural(cards.length, 'card')} done` : ''}; if ${at.base}'s ROADMAP.md changed since the branch started, ${REMOTE}/${at.base} is merged into the branch before that. This checkout's ROADMAP.md stays as it is until the pull request merges.`,
+      : `First it commits ROADMAP.md on the branch as the board has it now${cards.length ? `, with ${plural(cards.length, 'card')} done` : ''}; if ${at.base}'s ROADMAP.md changed since the branch started, ${REMOTE}/${at.base} is merged into the branch before that. This checkout's ROADMAP.md stays as it is until Pull brings in the merge.`,
+    others,
     `Title: ${title}`,
     `Body:\n${preview(body)}`,
   ]

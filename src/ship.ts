@@ -78,6 +78,14 @@ async function tagTaken(repoRoot: string, tag: string): Promise<string | undefin
 
 // ───────────────────────────── Ship ─────────────────────────────
 
+/** ROADMAP.md as the remote's base branch has it, fetched first (as last fetched when the fetch fails): what a
+ *  pull request into it changes the board from. Undefined when it has no ROADMAP.md. */
+export async function baseRoadmap(dir: string, base: string): Promise<string | undefined> {
+  await fetchBase(dir, base);
+  const r = await git(dir, ['show', `refs/remotes/${REMOTE}/${base}:ROADMAP.md`]);
+  return r.ok ? r.stdout : undefined;
+}
+
 export interface ShipPlan {
   /** The branch's worktree: where its commits are made and pushed from. */
   worktree: string;

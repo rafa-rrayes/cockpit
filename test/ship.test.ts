@@ -6,10 +6,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { applyRoadmapEdit, finishBranch, finishMerged, linkCard, parseRoadmap, setLaneStatus } from '../src/data/roadmap';
+import { applyRoadmapEdit, boardChanges, finishBranch, finishMerged, linkCard, parseRoadmap, setLaneStatus } from '../src/data/roadmap';
 import type { RunResult } from '../src/data/git';
 import { prBody, prTitle, releaseBody, releaseTitle, roadmapCommitMessage } from '../src/publish';
-import { draftRelease, findRelease, type Gh, openRelease, prsFrom, pullDefault, pushTag, shipBranch } from '../src/ship';
+import { baseRoadmap, draftRelease, findRelease, type Gh, openRelease, prsFrom, pullDefault, pushTag, shipBranch } from '../src/ship';
 
 const ok = (stdout: string): RunResult => ({ ok: true, stdout, stderr: '', timedOut: false });
 const failed = (stderr: string): RunResult => ({ ok: false, stdout: '', stderr, code: 1, timedOut: false });
@@ -127,6 +127,8 @@ describe('Ship: the roadmap travels in the pull request', () => {
     text = change(applyRoadmapEdit(read(roadmapPath()), { op: 'add', lane: 'Backlog', text: 'Later idea' }));
     writeFileSync(roadmapPath(), text);
     const cardsB = [{ text: 'Card B', lane: '0.2.0' }];
+    // What Ship's confirmation lists besides B's own card: the board edit, against main on the remote.
+    expect(boardChanges((await baseRoadmap(repo, 'main')) ?? '', finishBranch(text, B), ['Card B'])).toEqual(['added "Later idea" (Backlog, planned)']);
     const shippedB = await shipBranch({ worktree: wt('b'), branch: B, base: 'main', roadmap: finishBranch(text, B), commitMessage: roadmapCommitMessage(cardsB), title: prTitle(cardsB, ''), body: prBody(cardsB, undefined) }, fakeGh().gh);
     expect(shippedB.done).toEqual([`merged origin/main into ${B}`, `committed ROADMAP.md on ${B}`, `pushed ${B} to origin`, 'opened https://github.com/o/r/pull/1']);
     merge(B, 'merge');

@@ -44,6 +44,18 @@ export function roadmapCommitMessage(cards: ShippedCard[]): string {
   return `Roadmap: ${cards.length} cards done`;
 }
 
+const BOARD_LISTED = 5;
+
+/** What Ship's confirmation says about the board changes it carries beyond the branch's own cards (roadmap.ts
+ *  boardChanges, against `against`): nothing when there are none, else how many and the first few. */
+export function otherBoardChanges(changes: string[], against: string): string {
+  const n = changes.length;
+  if (n === 0) return '';
+  const listed = changes.slice(0, BOARD_LISTED).map((c) => `- ${c}`);
+  if (n > BOARD_LISTED) listed.push(`- and ${n - BOARD_LISTED} more`);
+  return [`It also carries ${n === 1 ? '1 other board change' : `${n} other board changes`}, against ROADMAP.md on ${against}:`, ...listed].join('\n');
+}
+
 // ───────────────────────────── Release ─────────────────────────────
 
 export const releaseBranch = (version: string): string => `release-${version}`;

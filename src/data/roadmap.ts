@@ -352,6 +352,54 @@ export function finishMerged(text: string, work: MergedWork): string {
   return out;
 }
 
+const STATUS_WORDS: Record<ItemStatus, string> = { todo: 'planned', doing: 'in progress', done: 'done' };
+const CARD_CHARS = 48;
+const quoted = (text: string): string => {
+  const one = text.replace(/\s+/g, ' ').trim();
+  return `"${one.length > CARD_CHARS ? `${one.slice(0, CARD_CHARS - 1).trimEnd()}…` : one}"`;
+};
+
+/** How the board in `to` differs from the board in `from`, a few words a change: releases added or removed or with a
+ *  new status, then cards added, moved to another lane, moved to another column, or removed. Cards are told apart by
+ *  their text; those whose text is in `skip` are left out, and so are links, which are Cockpit's bookkeeping. */
+export function boardChanges(from: string, to: string, skip: string[] = []): string[] {
+  const norm = (text: string): string => text.replace(/\s+/g, ' ').trim();
+  const skipped = new Set(skip.map(norm));
+  const before = parseRoadmap(from);
+  const after = parseRoadmap(to);
+  const key = (l: ReleasePlan): string => (l.backlog ? '\0backlog' : l.version);
+  const name = (l: ReleasePlan): string => (l.backlog ? `the ${l.version}` : `release ${l.version}`);
+  const out: string[] = [];
+
+  const was = new Map(before.map((l) => [key(l), l]));
+  const now = new Set(after.map(key));
+  for (const lane of after) {
+    const old = was.get(key(lane));
+    if (!old) out.push(`added ${name(lane)}`);
+    else if (!lane.backlog && (old.status ?? '') !== (lane.status ?? '')) out.push(`${lane.version}: status ${old.status ?? 'none'} → ${lane.status ?? 'none'}`);
+  }
+  for (const lane of before) if (!now.has(key(lane))) out.push(`removed ${name(lane)}`);
+
+  type Card = { text: string; lane: string; status: ItemStatus };
+  const cards = (lanes: ReleasePlan[]): Card[] => lanes.flatMap((l) => l.items.filter((i) => !skipped.has(norm(i.text))).map((i) => ({ text: i.text, lane: l.version, status: i.status })));
+  // The cards of `from` by text; a text written twice pairs with the one in the same lane first.
+  const pool = new Map<string, Card[]>();
+  for (const c of cards(before)) pool.set(norm(c.text), [...(pool.get(norm(c.text)) ?? []), c]);
+  for (const card of cards(after)) {
+    const list = pool.get(norm(card.text)) ?? [];
+    const at = Math.max(0, list.findIndex((c) => c.lane === card.lane));
+    const [old] = list.splice(at, 1);
+    if (!old) {
+      out.push(`added ${quoted(card.text)} (${card.lane}, ${STATUS_WORDS[card.status]})`);
+      continue;
+    }
+    const moves = [old.lane !== card.lane && `${old.lane} → ${card.lane}`, old.status !== card.status && `${STATUS_WORDS[old.status]} → ${STATUS_WORDS[card.status]}`].filter(Boolean);
+    if (moves.length) out.push(`${quoted(card.text)} ${moves.join(', ')}`);
+  }
+  for (const c of [...pool.values()].flat()) out.push(`removed ${quoted(c.text)} (${c.lane})`);
+  return out;
+}
+
 /** The release's "Status:" set to `value`: the line it has rewritten, or one added under its heading (after a
  *  "Target:" line right there). */
 export function setLaneStatus(text: string, version: string, value: string): EditResult {
