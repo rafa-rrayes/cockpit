@@ -1,11 +1,10 @@
 // Branches and worktrees as a board (In progress / Merged / Stale) with their PRs and Claudes, and CI below.
 import type { JSX } from 'preact';
-import { canShip } from '../../src/catchup';
 import type { CiRun, ClaudeSession, PullRequest, WorkGroup, WorkItem } from '../../src/model';
 import { useCockpit } from '../context';
-import { baseName, duration, plural } from '../format';
+import { baseName, deliveryText, duration, plural } from '../format';
 import { Icon } from '../icons';
-import { Ago, Chip, Empty, Section, StateMark, StatusDot, checkStatus, ciStatus } from '../ui';
+import { Ago, Chip, Empty, FinishButton, Section, StateMark, StatusDot, checkStatus, ciStatus } from '../ui';
 
 // Long columns (a pile of merged agent worktrees) show this many until opened.
 const FOLDED_LIMIT = 6;
@@ -111,13 +110,9 @@ function ItemCard({ item }: { item: WorkItem }): JSX.Element {
         </p>
       )}
       {item.pr && <PrRow pr={item.pr} />}
-      {canShip(item, state) && (
-        <div class="work-ship">
-          <button type="button" class="btn btn-small" title="Pushes the branch and opens its pull request, after showing both" onClick={() => post({ type: 'ship', branch: item.branch })}>
-            <Icon name="pr" /> Ship…
-          </button>
-        </div>
-      )}
+      <div class="work-ship">
+        <FinishButton item={item} />
+      </div>
       {sessions.length > 0 && (
         <ul class="work-sessions" aria-label="Claudes on this branch">
           {sessions.map((s) => (
@@ -200,6 +195,7 @@ export function Work(): JSX.Element {
   const { state } = useCockpit();
   const { work } = state;
   const byGroup = (g: WorkGroup): WorkItem[] => work.items.filter((i) => i.group === g);
+  const delivery = deliveryText(work);
 
   return (
     <Section
@@ -212,9 +208,10 @@ export function Work(): JSX.Element {
               {work.defaultBranch}
             </span>
           )}
-          {work.github && <span>{work.github}</span>}
-          {/* Shown beside the name too: lists kept from an earlier answer, or one gh call that failed. */}
-          {work.githubNote && <span class="muted">GitHub: {work.githubNote}</span>}
+          <Chip title={delivery.title}>{delivery.text}</Chip>
+          {/* Shown beside the name too: lists kept from an earlier answer, or one gh call that failed. In direct
+              delivery GitHub is not needed, and "no remote" would read as an error. */}
+          {work.githubNote && work.delivery === 'pr' && <span class="muted">GitHub: {work.githubNote}</span>}
         </>
       }
     >

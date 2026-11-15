@@ -1,5 +1,6 @@
 // Time and number formatting, and the shared clock that keeps "12m ago" current between State updates.
 import { useEffect, useState } from 'preact/hooks';
+import type { Work } from '../src/model';
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -57,6 +58,61 @@ export const plural = (n: number, one: string, many = `${one}s`): string => `${n
 /** The last path segment, for compact labels: "/a/b/harbor-wt/feat-x" → "feat-x". */
 export const baseName = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path;
 
+// ───────────────────────────── Actions as the delivery mode has them ─────────────────────────────
+
+/** A button's face: what it says, its icon and the tooltip saying exactly what it does. */
+export interface ActionFace {
+  label: string;
+  /** Names from icons.tsx, which this file cannot import: the unit tests compile it without JSX. */
+  icon: 'merge' | 'pr' | 'tag';
+  title: string;
+}
+
+const baseOf = (work: Work): string => work.defaultBranch ?? 'the default branch';
+
+/** The button that finishes a branch: "Merge into main…" in direct delivery, "Ship…" with pull requests. Work, Catch
+ *  up and the roadmap cards all use it, so the three places say the same thing. */
+export function finishAction(work: Work, branch: string): ActionFace {
+  if (work.delivery === 'direct') {
+    const base = baseOf(work);
+    return {
+      label: work.defaultBranch ? `Merge into ${work.defaultBranch}…` : 'Merge…',
+      icon: 'merge',
+      title: `Merges ${branch} into ${base} in the main checkout${work.hasOrigin ? ` and pushes ${base} to origin` : ''}, then marks its cards done, after a confirmation`,
+    };
+  }
+  return { label: 'Ship…', icon: 'pr', title: `Pushes ${branch} and opens its pull request, after showing both` };
+}
+
+/** A release lane's step button: prepare the release, or tag it. */
+export function releaseAction(work: Work, version: string, step: 'release' | 'tag'): ActionFace {
+  const tag = `v${version}`;
+  if (work.delivery === 'direct') {
+    const base = baseOf(work);
+    if (step === 'tag') return { label: `Tag ${tag}…`, icon: 'tag', title: `Tags the tip of ${base} as ${tag}${work.hasOrigin ? ' and pushes the tag' : ''}, after a confirmation` };
+    return {
+      label: `Release ${version}…`,
+      icon: 'tag',
+      title: `Bumps the version, dates the changelog, commits on ${base} and tags ${tag}${work.hasOrigin ? ', then pushes both' : ''}, after a confirmation`,
+    };
+  }
+  if (step === 'tag') return { label: `Tag ${tag}…`, icon: 'tag', title: 'Tags the merged release and pushes the tag, after a confirmation' };
+  return { label: `Release ${version}…`, icon: 'tag', title: 'Prepares the release pull request (version, changelog), after showing it' };
+}
+
+/** How finished work reaches the default branch, for the Work header: "direct · local", "direct · origin",
+ *  "pull requests · owner/repo". */
+export function deliveryText(work: Work): { text: string; title: string } {
+  const base = baseOf(work);
+  const how = 'Set "delivery" in .cockpit/config.json: auto, direct or pr.';
+  if (work.delivery === 'direct') {
+    return work.hasOrigin
+      ? { text: 'direct · origin', title: `Branches merge into ${base} in the main checkout, which is then pushed to origin. ${how}` }
+      : { text: 'direct · local', title: `Branches merge into ${base} in the main checkout; nothing leaves this machine. ${how}` };
+  }
+  return { text: `pull requests · ${work.github ?? 'origin'}`, title: `Branches reach ${base} through GitHub pull requests. ${how}` };
+}
+
 // One timer for the whole page. It ticks every second only while the page is visible.
 type Tick = (now: number) => void;
 const ticks = new Set<Tick>();
@@ -73,7 +129,8 @@ const stopClock = (): void => {
   if (timer !== undefined) clearInterval(timer);
   timer = undefined;
 };
-document.addEventListener('visibilitychange', () => {
+// Guarded so the formatting helpers above can be imported by the unit tests, which run in node.
+if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => {
   if (document.hidden) stopClock();
   else {
     const now = Date.now();

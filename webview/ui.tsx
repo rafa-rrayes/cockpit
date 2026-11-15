@@ -1,8 +1,10 @@
 // Small pieces shared by the sections: status words, status dots, ticking times, section frames.
 import type { ComponentChildren, JSX, RefObject } from 'preact';
-import { useEffect } from 'preact/hooks';
-import type { CheckSummary, CiJob, CiRun, ClaudeSession, SessionStatus } from '../src/model';
-import { fullDate, since, sinceLong, useNow } from './format';
+import { useEffect, useId } from 'preact/hooks';
+import { shipProblem } from '../src/catchup';
+import type { CheckSummary, CiJob, CiRun, ClaudeSession, SessionStatus, WorkItem } from '../src/model';
+import { useCockpit } from './context';
+import { finishAction, fullDate, since, sinceLong, useNow } from './format';
 import { Icon, type IconName } from './icons';
 
 export const statusWord: Record<SessionStatus, string> = {
@@ -127,4 +129,42 @@ export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, cl
       document.removeEventListener('keydown', key, true);
     };
   }, [open]);
+}
+
+interface FinishProps {
+  item: WorkItem;
+  primary?: boolean;
+  /** Only when it can run: a card shows the button when it has something to do, and no reasons. */
+  readyOnly?: boolean;
+}
+
+/** The button that finishes a branch ("Merge into main…" or "Ship…"). A branch with commits to finish that cannot
+ *  be finished yet keeps the button, disabled, with the reason as its tooltip and as a line under it. Nothing for
+ *  the default branch, a branch with nothing ahead, or one whose pull request is already the next step. */
+export function FinishButton({ item, primary = false, readyOnly = false }: FinishProps): JSX.Element | null {
+  const { state, post } = useCockpit();
+  const why = useId();
+  if (item.isDefault || item.ahead === 0 || (item.pr && item.pr.state !== 'closed')) return null;
+  const problem = shipProblem(item, state);
+  if (problem && readyOnly) return null;
+  const face = finishAction(state.work, item.branch);
+  const cls = `btn btn-small${primary ? ' btn-primary' : ''} finish`;
+  if (!problem) {
+    return (
+      <button type="button" class={cls} title={face.title} onClick={() => post({ type: 'ship', branch: item.branch })}>
+        <Icon name={face.icon} /> {face.label}
+      </button>
+    );
+  }
+  // aria-disabled rather than disabled: the button keeps its tooltip and stays reachable by keyboard.
+  return (
+    <span class="finish-blocked">
+      <button type="button" class={cls} aria-disabled="true" aria-describedby={why} title={problem}>
+        <Icon name={face.icon} /> {face.label}
+      </button>
+      <span class="finish-why muted" id={why}>
+        {problem}
+      </span>
+    </span>
+  );
 }

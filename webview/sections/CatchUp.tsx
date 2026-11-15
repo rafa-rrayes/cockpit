@@ -8,7 +8,7 @@ import { useCockpit } from '../context';
 import { plural } from '../format';
 import { Icon } from '../icons';
 import { Report } from '../Report';
-import { Ago, Chip, Empty, StatusDot, statusText } from '../ui';
+import { Ago, Chip, Empty, FinishButton, StatusDot, statusText } from '../ui';
 
 function Cards({ cards }: { cards: RoadmapItem[] }): JSX.Element | null {
   if (cards.length === 0) return null;
@@ -86,12 +86,7 @@ function Entry({ entry, onClose }: { entry: CatchUpEntry; onClose(): void }): JS
   }
 
   const { session: s, item } = entry;
-  const labels: Record<NextAction, JSX.Element> = {
-    ship: (
-      <>
-        <Icon name="pr" /> Ship…
-      </>
-    ),
+  const labels: Record<Exclude<NextAction, 'ship'>, JSX.Element> = {
     resume: (
       <>
         <Icon name="play" /> Resume
@@ -141,9 +136,15 @@ function Entry({ entry, onClose }: { entry: CatchUpEntry; onClose(): void }): JS
       <Cards cards={entry.cards} />
       {s.report && s.status !== 'waiting' ? <Report text={s.report} lane={laneOf(state, item?.branch)} /> : null}
       <div class="cu-actions">
-        <button type="button" class="btn btn-primary btn-small" onClick={() => act(entry.action)}>
-          {labels[entry.action]}
-        </button>
+        {entry.action === 'ship' ? (
+          item && <FinishButton item={item} primary />
+        ) : (
+          <button type="button" class="btn btn-primary btn-small" onClick={() => act(entry.action)}>
+            {labels[entry.action]}
+          </button>
+        )}
+        {/* Nothing else to do: a branch that has commits to finish but cannot be finished yet says why. */}
+        {entry.action === 'open' && item && <FinishButton item={item} />}
         {entry.action !== 'open' && (
           <button type="button" class="btn btn-small" onClick={() => act('open')}>
             Details
