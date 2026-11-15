@@ -88,8 +88,12 @@ export const STANDARD_STEPS: string[] = [
   'Read the code involved before deciding anything. Make the change as small as the card needs: no unrelated refactors and no features nobody asked for. If a card is ambiguous, take the most likely reading and say which.',
   "Prove it works with the project's own scripts: typecheck, build, and run the tests, adding tests for new behaviour. It is not done until they pass.",
   'Where the project keeps a CHANGELOG.md (Unreleased) or a README.md, update them for any change a user would notice.',
-  'Leave ROADMAP.md alone: Cockpit moves these cards on the board.',
+  'Leave the roadmap file alone: Cockpit moves these cards.',
 ];
+
+/** How a Claude finishes work: through Cockpit, which knows how this repository delivers (src/cli.ts). */
+export const COCKPIT_STEP =
+  "When I ask you to ship, complete, merge or release, don't do it by hand with git: run `cockpit status`, then `cockpit ship` or `cockpit release <version>`.";
 
 /** The standard every Claude started from the board works by: the general steps (`general`, or the standard ones
  *  when it is empty), with where it works after the first of them, and committing and subagents after the rest. */
@@ -103,16 +107,18 @@ export function launchPrompt(cards: LaunchCard[], options: LaunchOptions, projec
       ? 'You are in a new git worktree, on a branch of its own. Keep every change there and leave the main checkout alone.'
       : 'You are in the main checkout. Run `git status` first: leave changes you did not make alone, and ask before touching those files.',
     ...rest,
-    options.worktree
-      ? 'Commit on this branch with clear messages. Do not push, open a pull request or merge unless I ask.'
-      : 'Do not commit, push or open a pull request: leave the changes for me to review.',
+    `${
+      options.worktree
+        ? 'Commit on this branch with clear messages. Do not push, open a pull request or merge unless I ask.'
+        : 'Do not commit, push or open a pull request: leave the changes for me to review.'
+    } ${COCKPIT_STEP}`,
     options.subagents === 0
       ? 'Do the work yourself: do not start subagents.'
       : `Use up to ${options.subagents} subagent${options.subagents === 1 ? '' : 's'} in parallel for parts that are really independent (research, separate cards, an independent review). Give each a narrow, self-contained brief, keep work you can hold in your head inline, and check what they return before you rely on it.${options.subagentModel ? ` Every subagent runs on ${modelLabel(options.subagentModel)}: size their work to it.` : ''}`,
   ];
   if (batch) steps.push(`The ${cards.length} cards are one batch: do them together${options.worktree ? ', on this one branch, with a commit per card where they separate cleanly' : ''}.`);
   return [
-    `Work on ${batch ? `these ${cards.length} cards` : 'this card'} from the roadmap of ${project} (ROADMAP.md):`,
+    `Work on ${batch ? `these ${cards.length} cards` : 'this card'} from the roadmap of ${project}:`,
     '',
     list,
     '',

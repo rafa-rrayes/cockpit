@@ -2,6 +2,8 @@
 !dist/extension.js
 !dist/webview.js
 !dist/webview.css
+!dist/cockpit.js
+!bin/**
 !media/**
 !package.json
 !README.md

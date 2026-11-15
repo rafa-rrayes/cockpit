@@ -51,12 +51,13 @@ describe('the prompt and the command line', () => {
 
   it('lists the cards with their lanes and the standard', () => {
     const p = launchPrompt([card('Dark mode', '0.2.0')], opts(), 'shop');
-    expect(p).toContain('Work on this card from the roadmap of shop (ROADMAP.md):');
+    expect(p).toContain('Work on this card from the roadmap of shop:');
+    expect(p).not.toContain('ROADMAP.md');
     expect(p).toContain('- Dark mode (0.2.0)');
     expect(p).toContain('CLAUDE.md');
     expect(p).toContain('new git worktree');
     expect(p).toContain('Commit on this branch');
-    expect(p).toContain('Leave ROADMAP.md alone');
+    expect(p).toContain('Leave the roadmap file alone: Cockpit moves these cards.');
     expect(p).toContain('do not start subagents');
     expect(p).not.toContain('one batch');
   });
@@ -73,6 +74,16 @@ describe('the prompt and the command line', () => {
     const p = launchPrompt([card('Dark mode')], opts({ worktree: false }), 'shop');
     expect(p).toContain('You are in the main checkout');
     expect(p).toContain('Do not commit');
+  });
+
+  it('sends shipping and releasing through the cockpit command, with custom steps too', () => {
+    const line = (p: string) => p.split('\n').find((l) => l.includes('Commit on this branch') || l.includes('Do not commit')) ?? '';
+    for (const o of [opts(), opts({ worktree: false })]) {
+      for (const general of [[], ['Be brief.']]) {
+        const l = line(launchPrompt([card('Dark mode')], o, 'shop', general));
+        expect(l.endsWith("don't do it by hand with git: run `cockpit status`, then `cockpit ship` or `cockpit release <version>`.")).toBe(true);
+      }
+    }
   });
 
   it('builds argv with the prompt after --', () => {
