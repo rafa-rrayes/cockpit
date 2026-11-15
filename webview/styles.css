@@ -166,8 +166,6 @@ button { font: inherit; color: inherit; }
 .page { min-height: 100vh; }
 
 .sections {
-  max-width: 1480px;
-  margin: 0 auto;
   padding: 4px 24px 48px;
 }
 
@@ -212,8 +210,6 @@ button { font: inherit; color: inherit; }
   flex-wrap: wrap;
   align-items: center;
   gap: 2px 16px;
-  max-width: 1480px;
-  margin: 0 auto;
   padding: 3px 24px;
 }
 .brand { margin: 0; font-size: 1.15em; font-weight: 600; white-space: nowrap; }

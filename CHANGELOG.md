@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The Cockpit page fills the whole width of its tab, so a maximized Cockpit on a wide screen no longer sits in a
+  centred column with empty margins.
+
 ## 0.2.1 - 2026-11-14
 
 - Maximize: a button next to Refresh and **Cockpit: Maximize** (⌃⌘M, Ctrl+Alt+M on Windows and Linux) close the
