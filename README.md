@@ -116,10 +116,11 @@ a short note says why.
   tabs next to it, and the status-bar item brings it back. Cockpit offers once to set `workbench.startupEditor`
   to `none`, so the Welcome page doesn't open as well.
 - **Cockpit: Maximize** (⌃⌘M, Ctrl+Alt+M on Windows and Linux, or the button next to Refresh) brings the Cockpit
-  tab to the front with the side bars and the panel closed; the activity bar, the tabs and the status bar stay. The
-  same keys, the button again or Escape twice put the layout back as it was. It is VS Code's Zen mode: Cockpit
-  changes Zen mode's defaults to no full screen, no centered layout, status and activity bars shown and
-  notifications on. A `zenMode.*` setting of your own wins over these.
+  tab to the front and closes the side bars, the panel and, when the editor area is split, the other editor groups
+  (VS Code's **Maximize Editor Group and Hide Side Bars**, then **Close Panel**). The activity bar, the tabs and the
+  status bar stay, and no setting changes. It does not toggle back, since an extension cannot tell which of these
+  were open: reopen them with VS Code's own keys (⌘B, ⌥⌘B and ⌘J; Ctrl+B, Ctrl+Alt+B and Ctrl+J), and the other
+  editor groups with the restore button in the Cockpit tab's title bar.
 - **Cockpit: Refresh** reads everything again. Otherwise it updates by itself:
   - Claude sessions: when `~/.claude/sessions` changes, and every 15 s (60 s while the tab is hidden).
   - Git, the roadmap and the changelog: when the repository's refs, HEAD or worktrees change, when you save a

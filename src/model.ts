@@ -350,7 +350,7 @@ export type HostMessage = { type: 'state'; state: State };
 export type WebviewMessage =
   | { type: 'ready' } // the webview loaded: send State
   | { type: 'refresh' }
-  | { type: 'toggleMaximize' } // Zen mode on or off; the Cockpit tab is the active editor when its button is clicked
+  | { type: 'maximize' } // cockpit.maximize: the Cockpit tab with the side bars, the panel and other editor groups closed
   | { type: 'resumeSession'; sessionId: string } // new terminal: claude --resume <id> in the session's cwd
   | { type: 'focusSession'; sessionId: string } // show the VS Code terminal running it, when there is one
   | { type: 'openTranscript'; sessionId: string }

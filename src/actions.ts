@@ -52,8 +52,8 @@ export async function handleMessage(raw: unknown, host: ActionHost): Promise<voi
     case 'refresh':
       await host.refresh();
       return;
-    case 'toggleMaximize':
-      await vscode.commands.executeCommand('workbench.action.toggleZenMode');
+    case 'maximize':
+      await vscode.commands.executeCommand('cockpit.maximize');
       return;
     case 'copy':
       await vscode.env.clipboard.writeText(msg.text.slice(0, MAX_COPY_CHARS));

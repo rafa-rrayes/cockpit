@@ -275,12 +275,14 @@ export function activate(context: vscode.ExtensionContext): CockpitTestApi {
     attentionIndicators(store, view),
     vscode.commands.registerCommand('cockpit.open', () => panel.open()),
     vscode.commands.registerCommand('cockpit.refresh', () => store.refresh()),
-    // Maximizing is Zen mode with the Cockpit tab in front: VS Code restores the side bars and the panel exactly as
-    // they were, which an extension cannot (it can close them but not read whether they were open). The keybinding
-    // only calls this outside Zen mode; inside it the same keys run workbench.action.exitZenMode.
+    // Maximizing brings the Cockpit tab to the front and closes what is around it with VS Code's own commands: both
+    // side bars and, when the editor area is split, the other editor groups (Maximize Editor Group and Hide Side
+    // Bars), then the panel. No setting changes. It does not toggle back: an extension cannot read whether the side
+    // bars or the panel were open, so it could not put them back as they were. VS Code's own keys reopen each one.
     vscode.commands.registerCommand('cockpit.maximize', async () => {
       await panel.open();
-      await vscode.commands.executeCommand('workbench.action.toggleZenMode');
+      await vscode.commands.executeCommand('workbench.action.maximizeEditorHideSidebar');
+      await vscode.commands.executeCommand('workbench.action.closePanel');
     }),
     vscode.window.registerWebviewPanelSerializer(VIEW_TYPE, {
       deserializeWebviewPanel: async (restored) => panel.restore(restored),

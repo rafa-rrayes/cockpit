@@ -23,7 +23,7 @@ export function parseMessage(raw: unknown): WebviewMessage | undefined {
   switch (raw.type) {
     case 'ready':
     case 'refresh':
-    case 'toggleMaximize':
+    case 'maximize':
     case 'cleanMerged':
     case 'openRoadmap':
     case 'openSettings':

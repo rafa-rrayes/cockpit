@@ -95,7 +95,7 @@ export function Header(): JSX.Element {
           <button type="button" class="btn btn-icon" title="Refresh" aria-label="Refresh" onClick={() => post({ type: 'refresh' })}>
             <Icon name="refresh" />
           </button>
-          <button type="button" class="btn btn-icon" title={`Maximize or restore (${MAXIMIZE_KEYS})`} aria-label="Maximize or restore" onClick={() => post({ type: 'toggleMaximize' })}>
+          <button type="button" class="btn btn-icon" title={`Maximize: close the side bars and the panel (${MAXIMIZE_KEYS})`} aria-label="Maximize" onClick={() => post({ type: 'maximize' })}>
             <Icon name="maximize" />
           </button>
           <span class="set-anchor" ref={settingsRoot}>

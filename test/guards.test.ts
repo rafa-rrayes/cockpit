@@ -41,7 +41,7 @@ describe('parseMessage', () => {
   it('accepts the contract messages and nothing else', () => {
     expect(parseMessage({ type: 'ready' })).toEqual({ type: 'ready' });
     expect(parseMessage({ type: 'cleanMerged', extra: 1 })).toEqual({ type: 'cleanMerged' });
-    expect(parseMessage({ type: 'toggleMaximize' })).toEqual({ type: 'toggleMaximize' });
+    expect(parseMessage({ type: 'maximize' })).toEqual({ type: 'maximize' });
     expect(parseMessage({ type: 'resumeSession', sessionId: 'abc' })).toEqual({ type: 'resumeSession', sessionId: 'abc' });
     expect(parseMessage({ type: 'openFolder', path: '/x', newWindow: 'yes' })).toEqual({ type: 'openFolder', path: '/x', newWindow: false });
     expect(parseMessage({ type: 'copy', text: '' })).toEqual({ type: 'copy', text: '' });

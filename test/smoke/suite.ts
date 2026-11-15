@@ -102,6 +102,14 @@ export async function run(): Promise<void> {
   await vscode.commands.executeCommand('cockpit.open');
   await waitFor('the board follows a change made in the editor', () => lanes().length === 2, 10_000);
 
+  // Maximize runs VS Code's own layout commands, which must exist in this VS Code, and changes no setting.
+  const commands = await vscode.commands.getCommands(true);
+  for (const c of ['workbench.action.maximizeEditorHideSidebar', 'workbench.action.closePanel']) assert.ok(commands.includes(c), `VS Code has ${c}`);
+  await vscode.commands.executeCommand('workbench.view.extension.cockpit');
+  await api.receive({ type: 'maximize' });
+  await waitFor('Maximize brought Cockpit to the front', () => cockpitTabs()[0]?.isActive === true, 5000);
+  assert.equal(vscode.workspace.getConfiguration('zenMode').inspect('fullScreen')?.defaultValue, true, 'Zen mode keeps its own defaults');
+
   // The webview script ran under the Content-Security-Policy (it posted "ready") and received the State.
   await waitFor('the webview loaded and got a State', () => api.webviewReady() && api.statesPosted() > 0);
   console.log(

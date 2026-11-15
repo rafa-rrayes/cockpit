@@ -3,9 +3,8 @@
 ## Unreleased
 
 - Maximize: a button next to Refresh and **Cockpit: Maximize** (⌃⌘M, Ctrl+Alt+M on Windows and Linux) close the
-  side bars and the panel around the Cockpit tab. The same keys, or the button again, restore the layout as it was.
-  It is Zen mode, whose defaults Cockpit changes: no full screen, no centered layout, the status bar, activity bar
-  and notifications kept.
+  side bars, the panel and the other editor groups around the Cockpit tab, with VS Code's own commands; no setting
+  changes. VS Code's usual keys bring each one back.
 - The top bar is one compact row: the name (with the path as its tooltip), the section links, the session counts,
   Refresh and Maximize.
 - Start Claude from the roadmap: right-click a card (Cmd/Ctrl-click to select several, in any lane, as one batch)

@@ -42,23 +42,9 @@
       {
         "command": "cockpit.maximize",
         "key": "ctrl+alt+m",
-        "mac": "ctrl+cmd+m",
-        "when": "!inZenMode"
-      },
-      {
-        "command": "workbench.action.exitZenMode",
-        "key": "ctrl+alt+m",
-        "mac": "ctrl+cmd+m",
-        "when": "inZenMode"
+        "mac": "ctrl+cmd+m"
       }
     ],
-    "configurationDefaults": {
-      "zenMode.fullScreen": false,
-      "zenMode.centerLayout": false,
-      "zenMode.hideStatusBar": false,
-      "zenMode.hideActivityBar": false,
-      "zenMode.silentNotifications": false
-    },
     "viewsContainers": {
       "activitybar": [
         {
@@ -83,12 +69,6 @@
       }
     ],
     "menus": {
-      "commandPalette": [
-        {
-          "command": "cockpit.maximize",
-          "when": "!inZenMode"
-        }
-      ],
       "view/title": [
         {
           "command": "cockpit.refresh",
