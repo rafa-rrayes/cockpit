@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { applyRoadmapEdit, finishBranch, finishMerged, linkCard, nextMinor, parseRoadmap, setLaneStatus, starterRoadmap } from '../src/data/roadmap';
+import { applyRoadmapEdit, finishBranch, finishMerged, isMemberName, linkCard, nextMinor, normalizeDuration, parseRoadmap, setLaneStatus, starterRoadmap } from '../src/data/roadmap';
 import { parseRoadmapEdit } from '../src/guards';
 import type { RoadmapEdit } from '../src/model';
 
@@ -269,5 +269,77 @@ describe('parseRoadmapEdit', () => {
     expect(parseRoadmapEdit({ op: 'add', lane: 'Backlog', text: 'x'.repeat(2000) })).toBeUndefined();
     expect(parseRoadmapEdit({ op: 'drop-table' })).toBeUndefined();
     expect(parseRoadmapEdit('add')).toBeUndefined();
+  });
+});
+
+describe('assignment and duration', () => {
+  const META = '## 1.0\n\n- [~] Feed <!-- cockpit:who=Rafa --> <!-- cockpit:time=2h --> <!-- cockpit:worktree-1.0-feed -->\n- [ ] Plain\n';
+
+  it('reads who and how long from the comments, outside the text', () => {
+    const [feed, plain] = parseRoadmap(META)[0]?.items ?? [];
+    expect(feed).toMatchObject({ text: 'Feed', who: 'Rafa', duration: '2h', branch: 'worktree-1.0-feed', status: 'doing' });
+    expect(plain).not.toHaveProperty('who');
+    expect(plain).not.toHaveProperty('duration');
+  });
+
+  it('reads them in any order, and leaves a comment it does not know in the text', () => {
+    const [a] = parseRoadmap('## 1.0\n- [ ] A <!-- cockpit:b --> <!-- cockpit:time=1d -->\n')[0]?.items ?? [];
+    expect(a).toMatchObject({ text: 'A', branch: 'b', duration: '1d' });
+    const [b] = parseRoadmap('## 1.0\n- [ ] B <!-- cockpit:who=<x> -->\n')[0]?.items ?? [];
+    expect(b?.who).toBeUndefined();
+    expect(b?.text).toContain('cockpit:who');
+  });
+
+  it('assigns, reassigns and unassigns, writing who before the time and the link', () => {
+    const one = edit(DOC, { op: 'assign', id: id(DOC, 'Comments'), who: 'Claude' });
+    expect(one).toBe(DOC.replace('- [ ] Comments', '- [ ] Comments <!-- cockpit:who=Claude -->'));
+    const linked = linkCard(one, id(one, 'Comments'), 'b');
+    if (!linked.ok) throw new Error(linked.error);
+    expect(linked.text).toContain('- [ ] Comments <!-- cockpit:who=Claude --> <!-- cockpit:b -->');
+    const timed = edit(linked.text, { op: 'setDuration', id: id(linked.text, 'Comments'), duration: '90 min' });
+    expect(timed).toContain('- [ ] Comments <!-- cockpit:who=Claude --> <!-- cockpit:time=90m --> <!-- cockpit:b -->');
+    const re = edit(timed, { op: 'assign', id: id(timed, 'Comments'), who: 'Rafa Rayes' });
+    expect(re).toContain('- [ ] Comments <!-- cockpit:who=Rafa Rayes --> <!-- cockpit:time=90m --> <!-- cockpit:b -->');
+    const unassigned = edit(re, { op: 'assign', id: id(re, 'Comments') });
+    const none = edit(unassigned, { op: 'setDuration', id: id(unassigned, 'Comments') });
+    expect(none).toContain('- [ ] Comments <!-- cockpit:b -->\n');
+  });
+
+  it('keeps them through a rename, a status change, a move and the end of the branch', () => {
+    const renamed = edit(META, { op: 'setText', id: id(META, 'Feed'), text: 'Video feed' });
+    expect(renamed).toContain('- [~] Video feed <!-- cockpit:who=Rafa --> <!-- cockpit:time=2h --> <!-- cockpit:worktree-1.0-feed -->');
+    expect(edit(META, { op: 'setStatus', id: id(META, 'Feed'), status: 'todo' })).toContain('- [ ] Feed <!-- cockpit:who=Rafa -->');
+    const moved = edit(META, { op: 'move', id: id(META, 'Feed'), lane: 'Backlog', status: 'todo' });
+    expect(parseRoadmap(moved).find((l) => l.backlog)?.items[0]).toMatchObject({ text: 'Feed', who: 'Rafa', duration: '2h' });
+    expect(finishBranch(META, 'worktree-1.0-feed')).toContain('- [x] Feed <!-- cockpit:who=Rafa --> <!-- cockpit:time=2h -->\n');
+  });
+
+  it('refuses a name or a duration it cannot write', () => {
+    expect(applyRoadmapEdit(DOC, { op: 'assign', id: id(DOC, 'Comments'), who: 'a --> b' })).toMatchObject({ ok: false });
+    expect(applyRoadmapEdit(DOC, { op: 'setDuration', id: id(DOC, 'Comments'), duration: 'soon' })).toMatchObject({ ok: false });
+    expect(applyRoadmapEdit(DOC, { op: 'assign', id: '99:zzz', who: 'Rafa' })).toMatchObject({ ok: false });
+  });
+
+  it('normalizes durations', () => {
+    expect(normalizeDuration('2h')).toBe('2h');
+    expect(normalizeDuration(' 1h 30min ')).toBe('1h30m');
+    expect(normalizeDuration('2 Days')).toBe('2d');
+    expect(normalizeDuration('1.5')).toBe('1.5h');
+    expect(normalizeDuration('1w2d')).toBe('1w2d');
+    for (const bad of ['', '0h', 'soon', '2x', 'h', '2h-']) expect(normalizeDuration(bad)).toBeUndefined();
+  });
+
+  it('knows what a member name may be', () => {
+    for (const ok of ['Rafa', 'Claude', 'Rafa Rayes', "O'Neil", 'José', 'a.b']) expect(isMemberName(ok)).toBe(true);
+    for (const bad of ['', ' Rafa', 'Rafa ', 'a-->', 'a<b', 'a=b', 'x'.repeat(41), 'a--b']) expect(isMemberName(bad)).toBe(false);
+  });
+
+  it('parses the edits the webview sends', () => {
+    expect(parseRoadmapEdit({ op: 'assign', id: '1:a', who: 'Rafa' })).toEqual({ op: 'assign', id: '1:a', who: 'Rafa' });
+    expect(parseRoadmapEdit({ op: 'assign', id: '1:a' })).toEqual({ op: 'assign', id: '1:a' });
+    expect(parseRoadmapEdit({ op: 'assign', id: '1:a', who: 'a-->' })).toBeUndefined();
+    expect(parseRoadmapEdit({ op: 'setDuration', id: '1:a', duration: '2h' })).toEqual({ op: 'setDuration', id: '1:a', duration: '2h' });
+    expect(parseRoadmapEdit({ op: 'setDuration', id: '1:a' })).toEqual({ op: 'setDuration', id: '1:a' });
+    expect(parseRoadmapEdit({ op: 'setDuration', id: '1:a', duration: 3 })).toBeUndefined();
   });
 });

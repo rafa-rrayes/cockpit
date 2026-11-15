@@ -267,6 +267,11 @@ button { font: inherit; color: inherit; }
 .set-sections { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
 .set-prompt { min-height: 96px; resize: vertical; font-size: 11px; line-height: 1.45; white-space: pre-wrap; }
 .set-note { margin: 0; color: var(--muted); font-size: 11px; }
+.set-members { display: flex; flex-direction: column; gap: 4px; }
+.set-member { display: flex; align-items: center; gap: 6px; margin: 0; }
+.set-swatch { flex: none; width: 22px; height: 22px; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-small); background: none; cursor: pointer; }
+.set-swatch::-webkit-color-swatch-wrapper { padding: 2px; }
+.set-swatch::-webkit-color-swatch { border: 0; border-radius: 2px; }
 .set-foot { display: flex; justify-content: flex-end; padding-top: 6px; border-top: 1px solid var(--border); }
 
 .jump { display: flex; flex-wrap: wrap; gap: 2px; }
@@ -525,6 +530,18 @@ button.needs-item:hover { background: color-mix(in srgb, var(--tone) 12%, var(--
 .rm-card.rm-doing, .rm-card.rm-doing:hover { border-left-color: var(--info); }
 .rm-card.rm-done, .rm-card.rm-done:hover { border-left-color: var(--ok); }
 .rm-done .rm-text { color: var(--muted); }
+/* Assigned: the accent is the member's color, whatever the column. */
+.rm-card.rm-assigned, .rm-card.rm-assigned:hover { border-left-color: var(--member); }
+/* Who the card is assigned to and how long it takes: a quiet row under the text, above the branch. */
+.rm-card:has(.rm-meta) { flex-wrap: wrap; }
+.rm-meta { order: 2; display: flex; flex-basis: 100%; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; color: var(--muted); font-size: 11px; }
+.rm-who { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rm-dot { flex: none; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.rm-duration { display: inline-flex; align-items: center; gap: 3px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.rm-duration:hover { color: var(--fg); }
+.rm-duration .icon { width: 12px; height: 12px; }
+.rm-menu .rm-menu-member { display: flex; align-items: center; gap: 6px; }
+.rm-input.rm-input-bad, .rm-input.rm-input-bad:focus { border-color: var(--fail); }
 .rm-dragging { opacity: 0.4; }
 /* Where the dragged card would land: a line above the card under the pointer. */
 .rm-drop-before::before {

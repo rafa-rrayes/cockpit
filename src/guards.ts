@@ -2,7 +2,7 @@
 // and what "Clean merged" may remove.
 import { isAbsolute } from 'node:path';
 import { isRunningAgentWorktree, runningAgentWorktrees } from './compose';
-import { isLinkBranch } from './data/roadmap';
+import { isLinkBranch, isMemberName } from './data/roadmap';
 import { MAX_BATCH, parseLaunchOptions } from './launch';
 import type { ItemStatus, RoadmapEdit, State, WebviewMessage, WorkItem } from './model';
 import { isReleaseVersion } from './publish';
@@ -107,6 +107,17 @@ export function parseRoadmapEdit(raw: unknown): RoadmapEdit | undefined {
     }
     case 'remove':
       return id !== undefined ? { op: 'remove', id } : undefined;
+    case 'assign': {
+      if (id === undefined) return undefined;
+      if (raw.who === undefined) return { op: 'assign', id };
+      return isMemberName(raw.who) ? { op: 'assign', id, who: raw.who } : undefined;
+    }
+    case 'setDuration': {
+      if (id === undefined) return undefined;
+      if (raw.duration === undefined) return { op: 'setDuration', id };
+      const duration = field(raw.duration);
+      return duration !== undefined ? { op: 'setDuration', id, duration } : undefined;
+    }
     case 'addRelease': {
       const version = field(raw.version);
       if (version === undefined) return undefined;

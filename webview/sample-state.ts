@@ -39,16 +39,16 @@ Status: in progress
 - [x] Order summary visible on small phones
 - [x] Round prices consistently
 - [x] Seller badges on the profile
-- [~] Payment step on its own screen <!-- cockpit:feat/checkout-redesign -->
+- [~] Payment step on its own screen <!-- cockpit:who=Claude --> <!-- cockpit:time=3h --> <!-- cockpit:feat/checkout-redesign -->
 - [~] Welcome link lifetime as an env var <!-- cockpit:worktree-1.5.0-welcome-link-lifetime -->
-- [~] Seller payouts export <!-- cockpit:worktree-1.5.0-seller-payouts -->
+- [~] Seller payouts export <!-- cockpit:who=Rafa --> <!-- cockpit:worktree-1.5.0-seller-payouts -->
 - [~] Daily push digest <!-- cockpit:feat/push-digest -->
 
 ## 1.6.0 — Offline drafts
 Target: December
 
 - [~] Keep the last ten drafts offline
-- [ ] Sync drafts when the connection returns
+- [ ] Sync drafts when the connection returns <!-- cockpit:who=Rafa --> <!-- cockpit:time=1d -->
 - [ ] Cache product pages at the edge
 - [ ] Shorter onboarding copy
 
@@ -566,6 +566,6 @@ export function sampleState(now = Date.now()): State {
       ],
     },
     activity,
-    settings: defaultSettings,
+    settings: { ...defaultSettings, members: [{ name: 'Rafa', color: '#3fb68b' }, { name: 'Claude', color: '#d97757' }] },
   };
 }

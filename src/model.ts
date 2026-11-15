@@ -186,6 +186,12 @@ export interface RoadmapItem {
   /** The branch working on the card: Start Claude records it in ROADMAP.md as "<!-- cockpit:<branch> -->" at the
    *  end of the card's line, and it is dropped by Cockpit's Pull once the branch's pull request merged. */
   branch?: string;
+  /** The team member the card is assigned to, by name: "<!-- cockpit:who=<name> -->" on the card's line. Only for
+   *  organizing: nothing acts on it. */
+  who?: string;
+  /** How long the card takes, as "2h", "30m", "1d", "1h30m": "<!-- cockpit:time=<duration> -->". Only for
+   *  organizing too. */
+  duration?: string;
   /** The branch's pull request merged while ROADMAP.md here still has the card open and linked: the card shows as
    *  done (compose sets its status), and Cockpit's Pull rewrites the line before it pulls. */
   merged?: boolean;
@@ -213,6 +219,8 @@ export type RoadmapEdit =
   | { op: 'setStatus'; id: string; status: ItemStatus } // in place
   | { op: 'move'; id: string; lane: string; status: ItemStatus; before?: string } // before: an item id of that lane; absent: the lane's end
   | { op: 'remove'; id: string }
+  | { op: 'assign'; id: string; who?: string } // who: a member's name; absent: unassigned
+  | { op: 'setDuration'; id: string; duration?: string } // "2h", "30m"; absent: none
   | { op: 'addRelease'; version: string; title?: string };
 
 /** Claude Code's model aliases (`claude --model <alias>`): each names the latest model of its family. */
@@ -304,6 +312,13 @@ export interface CatchUpMark {
 
 // ───────────────────────────── Settings ─────────────────────────────
 
+/** Someone cards can be assigned to: a name and the color the card's accent takes. */
+export interface Member {
+  name: string;
+  /** "#rrggbb" */
+  color: string;
+}
+
 export type SectionId = 'needs' | 'claudes' | 'roadmap' | 'work' | 'releases' | 'activity';
 
 /** Cockpit's VS Code settings (cockpit.*), checked: see src/settings.ts. */
@@ -321,6 +336,10 @@ export interface Settings {
   promptSteps: string[];
   /** Files Release bumps the version in besides the root package.json, relative to the repository root. */
   releaseVersionFiles: string[];
+  /** Team members of every project (the user's settings). */
+  members: Member[];
+  /** Team members of this project only (the workspace's settings); one named like a global member replaces it. */
+  projectMembers: Member[];
 }
 
 // ───────────────────────────── State ─────────────────────────────

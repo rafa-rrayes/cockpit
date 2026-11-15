@@ -178,6 +178,35 @@
           "scope": "resource",
           "markdownDescription": "**Per project**: read from the workspace's settings only, never the user's. The steps of the prompt a Claude started from the roadmap works by, one per item. Empty: Cockpit's standard steps. The steps that follow from the launcher's options (worktree or main checkout, committing, subagents) are added to them."
         },
+        "cockpit.members": {
+          "type": "array",
+          "default": [],
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "required": ["name", "color"],
+            "properties": {
+              "name": { "type": "string", "maxLength": 40 },
+              "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+            }
+          },
+          "markdownDescription": "Team members of every project: roadmap cards can be assigned to them, and an assigned card's accent takes the member's color. Only for organizing."
+        },
+        "cockpit.projectMembers": {
+          "type": "array",
+          "default": [],
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "required": ["name", "color"],
+            "properties": {
+              "name": { "type": "string", "maxLength": 40 },
+              "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+            }
+          },
+          "scope": "resource",
+          "markdownDescription": "**Per project**: read from the workspace's settings only, never the user's. Team members of this project only, besides `cockpit.members`; one with the same name as a global member replaces it here."
+        },
         "cockpit.release.versionFiles": {
           "type": "array",
           "default": [],

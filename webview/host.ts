@@ -50,7 +50,7 @@ function createHost(): Host {
   let log: DevLogEntry[] = [];
   let devUiState: unknown;
   /** Dev only: the settings the preview has written, as settings.json would hold them. */
-  const devConfig: Record<string, unknown> = {};
+  let devConfig: Record<string, unknown> | undefined;
 
   window.addEventListener('message', (event: MessageEvent<unknown>) => {
     if (!isHostMessage(event.data)) return;
@@ -85,10 +85,13 @@ function createHost(): Host {
   const devSetting = (edit: SettingEdit): void => {
     const state = window.__COCKPIT_DEV_STATE__;
     if (!state) return;
+    // Starts from the sample's members, the settings it has that are not their defaults.
+    devConfig ??= { members: state.settings.members, projectMembers: state.settings.projectMembers };
+    const config = devConfig;
     const value = storedValue(edit);
-    if (value === undefined) delete devConfig[edit.key];
-    else devConfig[edit.key] = value;
-    window.__COCKPIT_DEV_STATE__ = { ...state, settings: readSettings((key) => devConfig[key]) };
+    if (value === undefined) delete config[edit.key];
+    else config[edit.key] = value;
+    window.__COCKPIT_DEV_STATE__ = { ...state, settings: readSettings((key) => config[key]) };
   };
 
   return {

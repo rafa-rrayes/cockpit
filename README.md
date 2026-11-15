@@ -334,6 +334,7 @@ The board's file (`.cockpit/roadmap.md`, or the one it points at), which the boa
     - [~] Video feed               in progress (also "[/]" and "[-]")
     - [x] Seasons                  done
     - [~] Feed <!-- cockpit:worktree-1.2.0-feed -->   linked to a branch (Start Claude writes this)
+    - [ ] Search <!-- cockpit:who=Rafa --> <!-- cockpit:time=2h -->   assigned to a member, with a duration
 
     ## Backlog                     work not yet in a release (also "Later", "Unscheduled", "Someday", "Ideas")
     - [ ] Tablet layout
