@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.2 - 2026-11-14
+
 - Release bumps `package-lock.json` along with `package.json`, including a lockfile an earlier release left
   behind.
 - MIT license.
