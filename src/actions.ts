@@ -144,7 +144,7 @@ export async function runAgentAction(action: AgentAction, host: ActionHost): Pro
   if (action.verb === 'status') {
     await host.refreshLocal();
     const state = host.state();
-    return state ? { ok: true, lines: statusLines(state) } : { ok: false, lines: ['Cockpit has not read this repository yet. Try again in a moment.'] };
+    return state ? { ok: true, lines: statusLines(state, action.branch) } : { ok: false, lines: ['Cockpit has not read this repository yet. Try again in a moment.'] };
   }
   const ch = cliChannel();
   switch (action.verb) {

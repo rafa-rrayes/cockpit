@@ -133,9 +133,9 @@ export function parseRequest(raw: string): AgentAction | undefined {
 const MARK: Record<ItemStatus, string> = { todo: '[ ]', doing: '[~]', done: '[x]' };
 
 /** Why the branch cannot ship, from the point of view of the Claude asking on `current`: its own session is not
- *  "a Claude still working" there. */
+ *  "a Claude still working" there, as `cockpit ship` sees it too. */
 function problemFor(item: WorkItem, state: State, current: string | undefined): string | undefined {
-  return shipProblem(item.branch === current ? { ...item, sessionIds: [] } : item, state);
+  return shipProblem(item, state, { self: item.branch === current });
 }
 
 function laneHeader(lane: ReleasePlan): string {

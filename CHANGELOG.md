@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- The board lives in `.cockpit/roadmap.md`, in a `.cockpit/` folder that keeps itself out of git, so it never shows
+  in `git status` and never blocks a merge or a pull. A project that already has a `ROADMAP.md` keeps using it, and
+  `.cockpit/config.json` can point at any file (`"roadmap": "ROADMAP.md"`). There is one board per repository: every
+  worktree's window shows the main checkout's.
+- Delivery follows the repository. `direct`, for a repository with no remote: **Merge into main…** merges a finished
+  branch into the default branch and marks its cards done, and **Release X…** bumps the version, dates the
+  changelog, commits `Release X` and tags `vX`, all in the main checkout, in one step. `pr`, for a repository with
+  an `origin`: the pull-request flow as before. `"delivery"` in `.cockpit/config.json` sets it (`auto`, `direct`,
+  `pr`); an explicit `direct` with an `origin` also pushes.
+- `cockpit`, a command in every terminal of the window, so a Claude can ask Cockpit for `status`, `ship [branch]`,
+  `release <version>`, `tag <version>`, `pull`, `add <lane> <text…>` and `lane <version> [title…]`. It runs what the
+  board's buttons run, from any worktree, and asks first only for what leaves the machine. Exit 0 done, 1 refused,
+  2 no Cockpit.
+- Start Claude's prompt no longer names `ROADMAP.md`, and tells the Claude to ship and release through `cockpit`
+  instead of by hand with git.
+- Ship no longer commits the board on the branch, a release pull request no longer carries it, and a branch no
+  longer needs a worktree of its own to ship.
+- The finish button follows the delivery mode (**Merge into main…** or **Ship…**) and is also on a roadmap card
+  whose branch is ready. An action that is not available yet stays visible, disabled, with the reason. Lanes show
+  how many cards are done, the Work header shows the delivery mode, and the Roadmap header shows the board's file
+  and a line about `cockpit` to copy into a project's CLAUDE.md.
+
 ## 0.2.2 - 2026-11-14
 
 - The Cockpit page fills the whole width of its tab, so a maximized Cockpit on a wide screen no longer sits in a

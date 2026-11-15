@@ -19,7 +19,10 @@ Claude Code session on this machine:
   `claude --resume <id>` in the session's folder), **Focus terminal** (when it runs in a terminal of this window),
   **Open worktree**, **Open transcript** and **Copy ID**.
 - **Work**: branches and worktrees as a board (In progress, Merged, Stale) with uncommitted files, ahead/behind,
-  the pull request and its checks, and the Claudes working there. Below that, the latest CI runs.
+  the pull request and its checks, and the Claudes working there. Below that, the latest CI runs. The header shows
+  how this repository delivers (`direct · local`, `direct · origin` or `pull requests · owner/repo`, see
+  [Delivery](#delivery-ship-and-release)), and a branch with commits that cannot be finished yet keeps its button,
+  disabled, with the reason under it.
   **Clean merged…** lists the merged worktrees and branches it would remove and does nothing until you confirm.
   It leaves out anything a live Claude or a running subagent works in, a locked worktree, and a folder open in
   any VS Code window. After you confirm it checks again, then for each branch verifies with
@@ -31,79 +34,148 @@ Claude Code session on this machine:
 - **Roadmap**: a board you edit in place, with a lane for each planned release plus a Backlog, and the columns
   Planned, In progress and Done. Drag a card sideways to change its status, or to another lane to move it to
   another release. Each card's menu does the same without dragging, and also renames and deletes. **Add card**
-  sits under each lane's Planned column, and **Release** adds a lane. `ROADMAP.md` in the open folder is the
-  storage: every edit changes only its own lines in that file, through VS Code's editor, so undo works there and
-  the file stays one you (and any Claude) can edit by hand. With no `ROADMAP.md`, the section offers to create one.
+  sits under each lane's Planned column, and **Release** adds a lane. A lane's header shows how many of its cards
+  are done. The board is a plain file, `.cockpit/roadmap.md` (see [The `.cockpit/` folder](#the-cockpit-folder)):
+  every edit changes only its own lines in that file, through VS Code's editor, so undo works there and the file
+  stays one you (and any Claude) can edit by hand. With no board yet, the section offers to create one.
   **Start Claude…**, in a card's right-click menu, opens a terminal running `claude` on that card. Cmd-click
   (Ctrl-click) selects more cards, in any lane, to start one Claude on them as a batch. The launcher picks the model
   and the thinking effort (low to max); drag the thinking slider down, or click the handle under it, for a second
   slider with up to 8 subagents, and pull that one down for the model every subagent runs on (Auto leaves it to
   Claude Code; a model is forced with `CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`). The Claude gets a standard
   prompt (follow CLAUDE.md and the lessons, keep the change small, prove it with the tests, update the changelog,
-  commit on its branch, don't push), runs in a worktree of its own unless you untick it, and its planned cards
+  commit on its branch, and ship or release through the `cockpit` command, not by hand with git), runs in a
+  worktree of its own unless you untick it, and its planned cards
   move to In progress. The worktree is named after the lane and the card (`1.5.0-welcome-link-lifetime`,
   `backlog-tablet-layout`), Claude Code makes its branch `worktree-<name>`, and the cards are linked to that branch:
-  each shows the branch and its pull request.
-- **Ship, release, tag** (see [Ship and release](#ship-and-release)): **Ship…** on a finished branch (in Work and
-  Catch up) pushes it and opens its pull request; **Release X…** on a lane whose cards are all done opens the
-  release pull request; once that merges, **Tag vX…** tags and pushes. Each asks first, in a dialog that shows what
-  it will do.
+  each shows the branch and its pull request, and, once the branch can be finished, the button that finishes it.
+- **Ship, release, tag** (see [Delivery](#delivery-ship-and-release)): a finished branch gets **Merge into main…**
+  or **Ship…** (in Work, in Catch up and on its card), and a lane whose cards are all done gets **Release X…**.
+  What they do follows the repository: with no remote they merge, commit and tag here; with an `origin` they go
+  through pull requests. Each asks first, in a dialog that shows what it will do.
+- **For Claudes too**: the [`cockpit` command](#the-cockpit-command), in every terminal of the window, runs the
+  same actions, so a Claude can finish its own work when you ask it to.
 - **Releases**: the current version, the latest tag and the commits since it, and the changelog's Unreleased
   lines.
 - **Activity**: commits, session starts and ends, CI runs and pull requests, newest first.
 
-Cockpit only reads, except when you act: **Clean merged…**; the roadmap board, which writes `ROADMAP.md`; and
-**Ship…**, **Release…**, **Tag…** and **Pull**, which change git and GitHub only after a confirmation. A merged
-pull request changes only what the board shows; `ROADMAP.md` follows it when you **Pull** (see below). **Start Claude…** only opens a terminal: the Claude
-in it works under its own permission prompts. A Claude's last answer goes into a pull request's body only when you
-Ship; otherwise transcripts never leave the machine. The network calls are `gh` commands, made with your existing
-GitHub CLI login, and the `git fetch`/`push`/`pull` of those actions, to `origin`.
+Cockpit only reads, except when you act: **Clean merged…**; the roadmap board, which writes its own file; and the
+finish, **Release…**, **Tag…** and **Pull** actions, which change git (and GitHub) after a confirmation. **Start
+Claude…** only opens a terminal: the Claude in it works under its own permission prompts. A Claude's last answer
+goes into a pull request's body only when you Ship; otherwise transcripts never leave the machine. The network
+calls are `gh` commands, made with your existing GitHub CLI login, and the `git fetch`/`push`/`pull` of those
+actions, to `origin`.
 
-## Ship and release
+## The `.cockpit/` folder
 
-These run from the main checkout (the folder whose `ROADMAP.md` the board shows) and go to `origin` and the
-default branch. Each checks first and refuses with the reason; each shows its title and body (or its files) in a
-confirmation dialog, and does nothing if you cancel. If a step fails, a dialog says what was already done.
+Cockpit keeps its own files in `.cockpit/`, at the top of the main checkout:
 
-- **Ship…** (a branch with a worktree of its own, commits ahead, no uncommitted files, no open pull request, no
-  Claude busy on it): in the branch's worktree it fetches the default branch; if the default branch's `ROADMAP.md`
-  changed since the branch started, it merges `origin/<default>` into the branch (and aborts the merge on a
-  conflict). It commits `ROADMAP.md` as the board has it, with the branch's cards ticked and unlinked, pushes the
-  branch and runs `gh pr create`. The title is the cards (or the last commit subject); the body lists the cards and
-  the Claude's last answer as the report. So the board travels with the pull request, and the main checkout never
-  commits. It is the whole board, so the dialog also lists what else it changes against `origin/<default>`'s
-  `ROADMAP.md` (cards added, moved or removed, release status) besides the branch's own cards.
-- **Merged**: when a linked branch's pull request merged, the board shows its cards done; when a release pull
-  request merged, its lane shows as shipped. `ROADMAP.md` is not touched then, so a plain `git pull` is not stopped
-  by a change Cockpit made.
-- **Pull main** (Catch up, on a merged pull request): first makes the main checkout's `ROADMAP.md` read as the merges
-  have it (those cards done and unlinked, those lanes `Status: shipped`), then runs `git pull --ff-only --autostash`,
-  so `ROADMAP.md` is left clean. It refuses while `ROADMAP.md` has unsaved edits. A conflict when the stash is put
-  back is reported.
-- **Release X…** (a lane whose cards are all done): in a temporary worktree made from `origin/<default>` (this
-  checkout is not touched), it bumps the version in `package.json` and the files in `cockpit.release.versionFiles`,
-  dates `## Unreleased` in `CHANGELOG.md` as `## X - <today>` (leaving a new, empty `## Unreleased` above it), sets the lane's `Status: shipped`, commits on a new
-  branch `release-X`, pushes it and opens the pull request. The temporary worktree is always removed.
-- **Tag vX…** (the release pull request merged, or the lane says shipped, and no tag at or after X): finds the
-  merge commit through `gh`, creates the annotated tag `vX` on it and pushes it. The dialog says that a pushed tag
-  may start a deploy. If the push fails, the local tag is deleted again.
+    .cockpit/
+      .gitignore     "*": everything here stays out of git (written once; edit it to share the board)
+      roadmap.md     the board
+      config.json    optional: { "roadmap": "ROADMAP.md", "delivery": "auto" }
+      inbox/         requests of the cockpit command
 
-A card's link to its branch is an HTML comment at the end of its line in `ROADMAP.md`, which Markdown hides:
+The board is untracked, so it never shows up in `git status` and never stands in the way of a merge or a pull.
+There is one board per repository: every window shows the main checkout's, whichever worktree it has open.
+
+Which file is the board, first match:
+
+1. the file `"roadmap"` names in `.cockpit/config.json` (a path from the repository root, inside the repository);
+2. `.cockpit/roadmap.md`, when it exists;
+3. `ROADMAP.md` at the root, when it exists, so a project that already has one keeps working as it is;
+4. otherwise `.cockpit/roadmap.md`, which **Create roadmap** writes.
+
+Cockpit never commits the board on a branch. A board that git tracks (a `ROADMAP.md` you point at) is yours to
+commit, with one exception: a `direct` release puts it in its `Release X` commit.
+
+A card's link to its branch is an HTML comment at the end of its line, which Markdown hides:
 
     - [~] Welcome link lifetime as an env var <!-- cockpit:worktree-1.5.0-welcome-link-lifetime -->
 
+## Delivery: ship and release
+
+How finished work reaches the default branch is the repository's `"delivery"` in `.cockpit/config.json`:
+
+| | |
+|---|---|
+| `"auto"` (default) | `pr` when the repository has an `origin` remote, `direct` when it has none. |
+| `"direct"` | Merge into the default branch, and release with a commit and a tag on it, in the main checkout. With an `origin`, each also pushes. |
+| `"pr"` | GitHub pull requests, through `gh`. Without `gh` (or logged out) the actions refuse and say why; they never fall back to `direct`. |
+
+Every action checks first and refuses with the reason. From the board each shows what it will do in a confirmation
+dialog and does nothing if you cancel; from the `cockpit` command only what leaves the machine asks. If a step
+fails, you are told what was already done.
+
+A branch can be finished when it has commits the default branch lacks, no uncommitted files, no pull request open
+or merged, and no Claude working on it (the Claude that runs `cockpit ship` on its own branch does not count).
+
+**`direct`**
+
+- **Merge into main…** (`cockpit ship`): `git merge` of the branch into the default branch, in the main checkout,
+  which has to be on that branch. A fast-forward when it can be one; a merge that conflicts is undone. Then the
+  branch's cards are marked done and unlinked on the board. With an `origin`, the default branch is pushed.
+- **Release X…** (`cockpit release X`), on a lane whose cards are all done: bumps the version in `package.json`
+  and the files in `cockpit.release.versionFiles`, dates `## Unreleased` in `CHANGELOG.md` as `## X - <today>`
+  (leaving a new, empty `## Unreleased` above it), and commits `Release X` with those files only, plus the board
+  when git tracks it. It tags that commit `vX` (annotated) and marks the lane shipped. A file it bumps that has
+  uncommitted changes makes it refuse; a commit that fails puts the files back. With an `origin`, the branch and
+  the tag are pushed together.
+- **Tag vX…** shows only for a lane that says shipped and has no tag yet: it tags the default branch's tip.
+
+**`pr`**
+
+- **Ship…** (`cockpit ship`): pushes the branch and runs `gh pr create`. The title is the cards (or the last
+  commit subject); the body lists the cards and the Claude's last answer as the report.
+- **Merged**: when a linked branch's pull request merged, the board shows its cards done; when a release pull
+  request merged, its lane shows as shipped.
+- **Pull main** (Catch up, on a merged pull request; `cockpit pull`): writes what merged into the board (those
+  cards done and unlinked, those lanes `Status: shipped`), then runs `git pull --ff-only --autostash`. It refuses
+  while the board has unsaved edits in an editor. A conflict when the stash is put back is reported.
+- **Release X…** (`cockpit release X`): in a temporary worktree made from `origin/<default>` (this checkout is not
+  touched), it bumps the version and dates the changelog as above, commits on a new branch `release-X`, pushes it
+  and opens the pull request. The temporary worktree is always removed.
+- **Tag vX…** (`cockpit tag X`; the release pull request merged, and no tag at or after X): finds the merge commit
+  through `gh`, creates the annotated tag `vX` on it and pushes it. The dialog says that a pushed tag may start a
+  deploy. If the push fails, the local tag is deleted again.
+
 Branches keep their `worktree-` name when pushed, so the local and remote names match.
+
+## The `cockpit` command
+
+Cockpit puts `cockpit` on the PATH of every terminal of its window, so a Claude working there can ask Cockpit to do
+what the buttons do:
+
+    cockpit status                    what the board shows and what can be done next
+    cockpit ship [branch]             finish a branch (default: the current one)
+    cockpit release <version>         release a lane whose cards are all done
+    cockpit tag <version>             pr delivery: tag a merged release
+    cockpit pull                      pr delivery: bring the default branch up to date
+    cockpit add <lane> <text…>        add a card
+    cockpit lane <version> [title…]   add a release lane
+
+It works from any worktree: the request goes through `.cockpit/inbox/` to the VS Code window open on the
+repository, which runs it and answers. So a Claude kept inside its own worktree can still have its branch merged
+in the main checkout. Local steps (a merge, a release commit, a local tag) run at once, since the Claude's own
+permission prompt for the command is the confirmation; anything that pushes or opens a pull request shows the
+dialog in VS Code first. It exits 0 when done, 1 when refused (with the reason), 2 when no window with Cockpit is
+open on the repository. It needs `node` on the PATH.
+
+**Tell your Claudes.** A Claude started from the board is told about the command in its prompt. For the others, add
+a line to the project's `CLAUDE.md` (the copy button under the Roadmap header gives it):
+
+    To ship, merge or release, don't use git by hand: run `cockpit status`, then `cockpit ship` or `cockpit release <version>`.
 
 ## Build and install
 
     npm install
     npm run typecheck   # extension host and webview
     npm test            # vitest: the data layer, compose, the action guards
-    npm run build       # dist/extension.js, dist/webview.{js,css}, dist/dev.html, dist/dump-state.js
+    npm run build       # dist/extension.js, dist/webview.{js,css}, dist/dev.html, dist/dump-state.js, dist/cockpit.js
     npm run smoke       # starts a real VS Code (downloaded into .vscode-test/) with the extension
-    npm run package     # cockpit-0.1.1.vsix
+    npm run package     # cockpit-<version>.vsix
 
-Install it with `code --install-extension cockpit-0.1.1.vsix`, then reload the window. VS Code 1.100 or newer is
+Install it with `code --install-extension cockpit-<version>.vsix`, then reload the window. VS Code 1.100 or newer is
 required. `git` must be on the PATH. `gh` (logged in) is optional: without it, the PR and CI parts are left out and
 a short note says why.
 
@@ -124,7 +196,7 @@ a short note says why.
 - **Cockpit: Refresh** reads everything again. Otherwise it updates by itself:
   - Claude sessions: when `~/.claude/sessions` changes, and every 15 s (60 s while the tab is hidden).
   - Git, the roadmap and the changelog: when the repository's refs, HEAD or worktrees change, when you save a
-    file, when `ROADMAP.md` changes on disk (a Claude editing it in a terminal), and every 15 s. While the tab is
+    file, when the board's file changes on disk (a Claude editing it in a terminal), and every 15 s. While the tab is
     hidden these wait, and Cockpit catches up when it is shown again.
   - GitHub: every `cockpit.githubPollSeconds` while the tab is visible, never while it's hidden.
 - In a multi-root workspace, Cockpit shows the first folder.
@@ -166,7 +238,7 @@ The last assistant answer of each session (up to 20,000 characters) is kept as i
 session details and a shipped pull request's body.
 
 **Git** commands only read: `worktree list`, `for-each-ref`, `status --porcelain` with `GIT_OPTIONAL_LOCKS=0` (so
-they never take `index.lock` while a Claude commits), `log`, `tag`. Ship, Release, Tag and Pull (above) write.
+they never take `index.lock` while a Claude commits), `log`, `tag`. Merge, Ship, Release, Tag and Pull (above) write.
 
 **GitHub**: `gh repo view`, `gh pr list`, `gh run list`; and `gh pr create` when you Ship or Release.
 
@@ -177,7 +249,8 @@ come from the repository):
   `app/app.json`, `pyproject.toml`, `Cargo.toml`.
 - The latest tag is the newest `v*` tag.
 
-`ROADMAP.md`, which the board reads and writes (`src/data/roadmap.ts`):
+The board's file (`.cockpit/roadmap.md`, or the one it points at), which the board reads and writes
+(`src/data/roadmap.ts`):
 
     ## 1.2.0 — Comunidade          a release: version (an optional "v" or [brackets]), "—", "-" or ":", an optional title
     Target: week of 2026-11-16     optional, free text
@@ -185,7 +258,7 @@ come from the repository):
     - [ ] Comments                 planned (a plain "- Comments" too)
     - [~] Video feed               in progress (also "[/]" and "[-]")
     - [x] Seasons                  done
-    - [~] Feed <!-- cockpit:worktree-1.2.0-feed -->   linked to a branch (Start Claude and Ship write this)
+    - [~] Feed <!-- cockpit:worktree-1.2.0-feed -->   linked to a branch (Start Claude writes this)
 
     ## Backlog                     work not yet in a release (also "Later", "Unscheduled", "Someday", "Ideas")
     - [ ] Tablet layout
@@ -209,14 +282,20 @@ Unreleased is shown first, then the newest four releases.
 
 - `src/model.ts` is the contract: the `State` the extension host sends to the webview, and the messages the
   webview sends back.
-- `src/data/*` are the adapters (Claude Code, git, GitHub, releases). `src/data/roadmap.ts` parses `ROADMAP.md`
+- `src/data/*` are the adapters (Claude Code, git, GitHub, releases). `src/data/roadmap.ts` parses the board's file
   and applies the board's edits to its text; it is pure, so the browser preview runs the same code.
+  `src/data/cockpitDir.ts` knows `.cockpit/`: its config, which file is the board, and the delivery mode.
 - `src/compose.ts` builds the State from them. It is pure and unit-tested.
 - `src/store.ts` runs the refresh loop.
-- `src/actions.ts` handles the webview's messages. The checks on them are in `src/guards.ts`.
+- `src/actions.ts` handles the webview's messages, and the `cockpit` command's requests through the same code. The
+  checks on the webview's messages are in `src/guards.ts`.
+- `src/cli.ts` is the `cockpit` command (`dist/cockpit.js`, run by `bin/cockpit`), `src/inbox.ts` the request
+  files between it and the extension, and `src/agent.ts` (pure) its arguments, its requests and the words of
+  `cockpit status`.
 - `src/catchup.ts` (what Catch up lists, whether a branch can ship) and `src/publish.ts` (pull request titles and
-  bodies, version bumps, the dated changelog, the release steps) are pure. `src/ship.ts` runs the git commands and
-  takes `gh` as a function, so the tests run it against a local bare remote and check the `gh` arguments.
+  bodies, version bumps, the dated changelog, the release steps) are pure. `src/ship.ts` runs the git commands of
+  both deliveries and takes `gh` as a function, so the tests run it against real temporary repositories, with a
+  local bare remote for `pr`, and check the `gh` arguments.
 - `src/extension.ts` handles the tab, the startup takeover, the status bar and the activity bar.
 - `webview/` is the Preact UI.
 
