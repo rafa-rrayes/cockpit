@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseMessage } from '../src/guards';
 import { STANDARD_STEPS, defaultLaunch, launchPrompt } from '../src/launch';
-import { defaultSettings, isProjectSetting, parseSettingEdit, readSettings, storedValue } from '../src/settings';
+import { boardMembers, defaultSettings, isProjectSetting, parseSettingEdit, readSettings, storedValue } from '../src/settings';
 
 const from = (config: Record<string, unknown>) => readSettings((key) => config[key]);
 
@@ -128,5 +128,34 @@ describe('custom prompt steps', () => {
     const p = launchPrompt([card], defaultLaunch, 'shop', []);
     for (const step of STANDARD_STEPS) expect(p).toContain(step);
     expect(p).toBe(launchPrompt([card], defaultLaunch, 'shop'));
+  });
+});
+
+describe('members', () => {
+  const rafa = { name: 'Rafa', color: '#D97757' };
+  const claude = { name: 'Claude', color: '#4f8ff7' };
+
+  it('reads global and project members, dropping bad entries and repeated names', () => {
+    const s = from({ members: [rafa, { name: 'rafa', color: '#000000' }, { name: 'x', color: 'red' }, 'Bob', claude], projectMembers: [{ name: 'Ana', color: '#3fb68b' }] });
+    expect(s.members).toEqual([{ name: 'Rafa', color: '#d97757' }, claude]);
+    expect(s.projectMembers).toEqual([{ name: 'Ana', color: '#3fb68b' }]);
+    expect(from({ members: 'Rafa' }).members).toEqual([]);
+  });
+
+  it('keeps project members to the workspace', () => {
+    expect(isProjectSetting('projectMembers')).toBe(true);
+    expect(isProjectSetting('members')).toBe(false);
+  });
+
+  it('accepts an edit of valid, distinct members only', () => {
+    expect(parseSettingEdit({ key: 'members', value: [rafa, claude] })).toEqual({ key: 'members', value: [{ name: 'Rafa', color: '#d97757' }, claude] });
+    expect(parseSettingEdit({ key: 'members', value: [rafa, { ...rafa, name: 'RAFA' }] })).toBeUndefined();
+    expect(parseSettingEdit({ key: 'projectMembers', value: [{ name: 'a-->', color: '#000000' }] })).toBeUndefined();
+    expect(storedValue({ key: 'members', value: [] })).toBeUndefined();
+  });
+
+  it('lists project members first, replacing a global one of the same name', () => {
+    const local = { name: 'rafa', color: '#000000' };
+    expect(boardMembers({ members: [rafa, claude], projectMembers: [local] })).toEqual([local, claude]);
   });
 });

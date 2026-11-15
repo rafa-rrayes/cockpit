@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Team members: add them in Settings, for every project (All projects) or for one (This project), each with a
+  name and a color. Right-click a card to assign it to one; the card's accent takes their color. Cards can also
+  have a duration (30m, 2h, 1d, 1h30m). Both are only for organizing, and both are kept in the board's file.
 - **Pull** reports the conflict when your uncommitted changes clash with what came in on newer git, whose
   message changed; it said "pulled" before.
 - README: banner, screenshots, quick start; contributing guide, issue templates and CI.

@@ -3,8 +3,9 @@
 // (Cmd/Ctrl-click) and handed to a new Claude from their right-click menu.
 import type { JSX, RefObject } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import type { ItemStatus, LaunchOptions, ReleasePlan, RoadmapEdit, RoadmapItem } from '../../src/model';
-import { nextMinor } from '../../src/data/roadmap';
+import type { ItemStatus, LaunchOptions, Member, ReleasePlan, RoadmapEdit, RoadmapItem } from '../../src/model';
+import { nextMinor, normalizeDuration } from '../../src/data/roadmap';
+import { boardMembers, sameMember } from '../../src/settings';
 import { compareVersions, isShipped, releaseStep, tagName } from '../../src/publish';
 import { EFFORTS, MAX_SUBAGENTS, MODELS } from '../../src/launch';
 import { useCockpit } from '../context';
@@ -77,6 +78,59 @@ function LineInput(props: { initial?: string; label: string; placeholder?: strin
   );
 }
 
+/** The card's duration field: Enter or leaving it writes what was typed when it reads as a duration, an empty field
+ *  clears it, Escape cancels. */
+function DurationInput(props: { initial?: string; onCommit(duration: string | undefined): void; onClose(): void }): JSX.Element {
+  const ref = useRef<HTMLInputElement>(null);
+  const settled = useRef(false);
+  const [bad, setBad] = useState(false);
+  useEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+  const commit = (): void => {
+    const text = ref.current?.value.trim() ?? '';
+    const duration = text ? normalizeDuration(text) : undefined;
+    if (text && !duration) {
+      setBad(true);
+      return;
+    }
+    settled.current = true;
+    if (duration !== props.initial) props.onCommit(duration);
+    props.onClose();
+  };
+  return (
+    <input
+      ref={ref}
+      class={bad ? 'rm-input rm-input-bad' : 'rm-input'}
+      type="text"
+      maxLength={30}
+      defaultValue={props.initial ?? ''}
+      placeholder="30m, 2h, 1d, 1h30m"
+      aria-label="Duration"
+      aria-invalid={bad}
+      title={bad ? 'A duration looks like 30m, 2h, 1d or 1h30m' : undefined}
+      onInput={() => setBad(false)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commit();
+        else if (e.key === 'Escape') {
+          settled.current = true;
+          props.onClose();
+        }
+      }}
+      onBlur={() => {
+        if (settled.current) return;
+        // Leaving a field that does not read as a duration drops what was typed.
+        const text = ref.current?.value.trim() ?? '';
+        if (text && !normalizeDuration(text)) {
+          settled.current = true;
+          props.onClose();
+        } else commit();
+      }}
+    />
+  );
+}
+
 interface Point {
   x: number;
   y: number;
@@ -105,6 +159,8 @@ interface CardProps {
   item: RoadmapItem;
   lane: ReleasePlan;
   lanes: ReleasePlan[];
+  /** Who cards can be assigned to. */
+  members: Member[];
   dragging: boolean;
   dropBefore: boolean;
   selected: boolean;
@@ -121,8 +177,10 @@ interface CardProps {
   onDrop(drop: Drop): void;
 }
 
-function Card({ item, lane, lanes, dragging, dropBefore, selected, selectedCount, edit, onSelect, onStart, onDragStart, onDragEnd, onDragOver, onDrop }: CardProps): JSX.Element {
-  const [renaming, setRenaming] = useState(false);
+function Card({ item, lane, lanes, members, dragging, dropBefore, selected, selectedCount, edit, onSelect, onStart, onDragStart, onDragEnd, onDragOver, onDrop }: CardProps): JSX.Element {
+  /** The text or the duration, being edited on the card. */
+  const [editing, setEditing] = useState<'text' | 'duration' | undefined>();
+  const renaming = editing !== undefined;
   /** Open: from the ⋯ button (no point) or a right-click (at the pointer). */
   const [menu, setMenu] = useState<{ at?: Point } | undefined>();
   const root = useRef<HTMLLIElement>(null);
@@ -153,11 +211,14 @@ function Card({ item, lane, lanes, dragging, dropBefore, selected, selectedCount
     onStart(at);
   };
 
-  const cls = ['rm-card', `rm-${item.status}`, dragging && 'rm-dragging', dropBefore && 'rm-drop-before', selected && 'rm-selected'].filter(Boolean).join(' ');
+  // A member the settings no longer have still shows on the card, without a color.
+  const who = item.who === undefined ? undefined : (members.find((m) => sameMember(m.name, item.who ?? '')) ?? { name: item.who, color: undefined });
+  const cls = ['rm-card', `rm-${item.status}`, who?.color && 'rm-assigned', dragging && 'rm-dragging', dropBefore && 'rm-drop-before', selected && 'rm-selected'].filter(Boolean).join(' ');
   return (
     <li
       ref={root}
       class={cls}
+      style={who?.color ? { '--member': who.color } : undefined}
       draggable={!renaming}
       aria-selected={open ? selected : undefined}
       onClick={(e) => {
@@ -189,11 +250,29 @@ function Card({ item, lane, lanes, dragging, dropBefore, selected, selectedCount
         onDrop({ lane: lane.version, status: item.status, before: item.id });
       }}
     >
-      {renaming ? (
-        <LineInput initial={item.text} label="Card text" onCommit={(text) => edit({ op: 'setText', id: item.id, text })} onClose={() => setRenaming(false)} />
+      {editing === 'text' ? (
+        <LineInput initial={item.text} label="Card text" onCommit={(text) => edit({ op: 'setText', id: item.id, text })} onClose={() => setEditing(undefined)} />
+      ) : editing === 'duration' ? (
+        <DurationInput initial={item.duration} onCommit={(duration) => edit({ op: 'setDuration', id: item.id, ...(duration ? { duration } : {}) })} onClose={() => setEditing(undefined)} />
       ) : (
-        <span class="rm-text" onDblClick={() => setRenaming(true)} title={open ? 'Double-click to rename. Cmd/Ctrl-click to select, right-click to start a Claude on it.' : 'Double-click to rename'}>
+        <span class="rm-text" onDblClick={() => setEditing('text')} title={open ? 'Double-click to rename. Cmd/Ctrl-click to select, right-click to start a Claude on it.' : 'Double-click to rename'}>
           {item.text}
+        </span>
+      )}
+      {!renaming && (who || item.duration) && (
+        <span class="rm-meta">
+          {who && (
+            <span class="rm-who" title={`Assigned to ${who.name}`}>
+              <span class="rm-dot" style={who.color ? { background: who.color } : undefined} />
+              {who.name}
+            </span>
+          )}
+          {item.duration && (
+            <button type="button" class="rm-duration" title="Duration: click to change" onClick={() => setEditing('duration')}>
+              <Icon name="clock" />
+              {item.duration}
+            </button>
+          )}
         </span>
       )}
       {!renaming && item.branch && <CardBranch branch={item.branch} />}
@@ -230,11 +309,39 @@ function Card({ item, lane, lanes, dragging, dropBefore, selected, selectedCount
                 role="menuitem"
                 onClick={() => {
                   setMenu(undefined);
-                  setRenaming(true);
+                  setEditing('text');
                 }}
               >
                 Rename
               </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMenu(undefined);
+                  setEditing('duration');
+                }}
+              >
+                {item.duration ? `Duration: ${item.duration}…` : 'Set duration…'}
+              </button>
+              {item.duration && (
+                <button type="button" role="menuitem" onClick={() => pick({ op: 'setDuration', id: item.id })}>
+                  Clear duration
+                </button>
+              )}
+              {(members.length > 0 || who) && <hr />}
+              {members
+                .filter((m) => !who || !sameMember(m.name, who.name))
+                .map((m) => (
+                  <button key={m.name} type="button" role="menuitem" class="rm-menu-member" onClick={() => pick({ op: 'assign', id: item.id, who: m.name })}>
+                    <span class="rm-dot" style={{ background: m.color }} /> Assign to {m.name}
+                  </button>
+                ))}
+              {who && (
+                <button type="button" role="menuitem" onClick={() => pick({ op: 'assign', id: item.id })}>
+                  Unassign {who.name}
+                </button>
+              )}
               <hr />
               {COLUMNS.filter((c) => c.status !== item.status).map((c) => (
                 <button key={c.status} type="button" role="menuitem" onClick={() => pick({ op: 'setStatus', id: item.id, status: c.status })}>
@@ -566,6 +673,7 @@ export function Roadmap(): JSX.Element {
   const [launch, setLaunch] = useState<{ ids: string[]; at: Point } | undefined>();
 
   const edit = (e: RoadmapEdit): void => post({ type: 'roadmap', edit: e });
+  const members = boardMembers(state.settings);
 
   // Ids name a line of the file: after an edit they can stop naming a card, so the selection keeps only the open
   // cards that are still there.
@@ -671,6 +779,7 @@ export function Roadmap(): JSX.Element {
                   item={item}
                   lane={lane}
                   lanes={lanes}
+                  members={members}
                   dragging={drag === item.id}
                   dropBefore={isOver && over?.before === item.id && drag !== item.id}
                   selected={selected.includes(item.id)}

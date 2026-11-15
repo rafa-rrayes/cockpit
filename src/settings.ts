@@ -3,7 +3,8 @@
 // reads them with `readSettings(key => ...)` and writes an edit with `config.update(key, storedValue)`: a project
 // setting (isProjectSetting) from and to the workspace's settings, the others from and to the user's.
 import { EFFORTS, MAX_SUBAGENTS, MODELS, defaultLaunch } from './launch';
-import type { ClaudeModel, LaunchOptions, SectionId, Settings } from './model';
+import { isMemberName } from './data/roadmap';
+import type { ClaudeModel, LaunchOptions, Member, SectionId, Settings } from './model';
 
 export const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'needs', label: 'Needs you' },
@@ -19,6 +20,7 @@ export const MIN_GITHUB_SECONDS = 15;
 export const MAX_PROMPT_STEPS = 30;
 export const MAX_PROMPT_STEP_CHARS = 1000;
 export const MAX_VERSION_FILES = 20;
+export const MAX_MEMBERS = 30;
 
 export const defaultSettings: Settings = {
   openOnStartup: true,
@@ -29,12 +31,21 @@ export const defaultSettings: Settings = {
   launch: defaultLaunch,
   promptSteps: [],
   releaseVersionFiles: [],
+  members: [],
+  projectMembers: [],
 };
 
 /** A path inside the repository, written with "/": no absolute path, no "..", nothing a command line could read as an
  *  option. */
 export const isRepoFile = (v: unknown): v is string =>
   typeof v === 'string' && v.length <= 200 && /^[A-Za-z0-9_][A-Za-z0-9_./ -]*$/.test(v) && !v.split('/').some((p) => p === '..' || p === '.' || p === '');
+
+export const isMemberColor = (v: unknown): v is string => typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v);
+const isMember = (v: unknown): v is Member =>
+  typeof v === 'object' && v !== null && isMemberName((v as Member).name) && isMemberColor((v as Member).color);
+export const sameMember = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+const isMembers = (v: unknown): v is Member[] =>
+  Array.isArray(v) && v.length <= MAX_MEMBERS && v.every(isMember) && new Set(v.map((m: Member) => m.name.toLowerCase())).size === v.length;
 
 const isModel = (v: unknown): v is ClaudeModel => MODELS.some((m) => m.model !== undefined && m.model === v);
 const isInt = (v: unknown, min: number, max: number): v is number => typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max;
@@ -61,6 +72,8 @@ const SETTINGS = {
     ok: (v: unknown) => Array.isArray(v) && v.length <= MAX_PROMPT_STEPS && v.every((s) => typeof s === 'string' && s.trim() !== '' && s.length <= MAX_PROMPT_STEP_CHARS),
   },
   'release.versionFiles': { project: true, stored: [] as string[], ok: (v: unknown) => Array.isArray(v) && v.length <= MAX_VERSION_FILES && v.every(isRepoFile) },
+  members: { stored: [] as Member[], ok: isMembers },
+  projectMembers: { project: true, stored: [] as Member[], ok: isMembers },
 } as const;
 
 export type SettingKey = keyof typeof SETTINGS;
@@ -81,6 +94,7 @@ export function parseSettingEdit(raw: unknown): SettingEdit | undefined {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
   const { key, value } = raw as Record<string, unknown>;
   if (!isKey(key) || !SETTINGS[key].ok(value)) return undefined;
+  if (key === 'members' || key === 'projectMembers') return { key, value: (value as Member[]).map((m) => ({ name: m.name, color: m.color.toLowerCase() })) };
   return { key, value: Array.isArray(value) ? [...new Set(value)] : value };
 }
 
@@ -103,6 +117,24 @@ function readSteps(v: unknown): string[] {
 function readFiles(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   return [...new Set(v.filter(isRepoFile))].slice(0, MAX_VERSION_FILES);
+}
+
+/** The members as written, without the entries that are not a member, or that repeat a name. */
+function readMembers(v: unknown): Member[] {
+  if (!Array.isArray(v)) return [];
+  const seen = new Set<string>();
+  const out: Member[] = [];
+  for (const m of v) {
+    if (!isMember(m) || seen.has(m.name.toLowerCase())) continue;
+    seen.add(m.name.toLowerCase());
+    out.push({ name: m.name, color: m.color.toLowerCase() });
+  }
+  return out.slice(0, MAX_MEMBERS);
+}
+
+/** Everyone a card can be assigned to: this project's members, then the global ones it does not rename. */
+export function boardMembers(s: Pick<Settings, 'members' | 'projectMembers'>): Member[] {
+  return [...s.projectMembers, ...s.members.filter((g) => !s.projectMembers.some((p) => sameMember(p.name, g.name)))];
 }
 
 /** The settings as `get` returns them (VS Code's configuration, which may hold anything a person typed into
@@ -137,5 +169,7 @@ export function readSettings(get: (key: SettingKey) => unknown): Settings {
     launch,
     promptSteps: readSteps(get('promptSteps')),
     releaseVersionFiles: readFiles(get('release.versionFiles')),
+    members: readMembers(get('members')),
+    projectMembers: readMembers(get('projectMembers')),
   };
 }

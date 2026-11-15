@@ -12,6 +12,9 @@
 //                                     the branch working on the card, recorded by Start Claude, dropped by the Pull
 //                                     after its merge;
 //                                     the comment is not part of the card's text and every edit keeps it
+//   - [ ] Feed <!-- cockpit:who=Rafa --> <!-- cockpit:time=2h -->
+//                                     the member the card is assigned to and how long it takes, set from the board;
+//                                     kept by every edit like the link, before it on the line
 //   ## Backlog                       work not yet in a release (also "Later", "Unscheduled", "Someday", "Ideas")
 //   Other headings ("## Notes", "## 1. Foundations": a version has a dot or a "v") end the lane above and are
 //   skipped with their items. Lines inside ``` or ~~~ code fences are skipped. "*" and "+" bullets, nested items
@@ -27,17 +30,63 @@ const BACKLOG_HEADING = /^(backlog|later|unscheduled|someday|ideas)$/i;
 const ITEM = /^(\s*)([-*+]|\d+[.)])(\s+)(?:\[([ xX~/-])\]\s*)?(.*)$/;
 const NEW_VERSION = /^\d+(?:\.\d+){1,2}(?:-[0-9A-Za-z.-]+)?$/;
 const MAX_TEXT = 300;
-/** The card's branch link at the end of its line. */
-const LINK = /\s*<!--\s*cockpit:([A-Za-z0-9._/-]+)\s*-->\s*$/;
+/** One of Cockpit's comments at the end of a card's line: a branch link, "who=<name>" or "time=<duration>". */
+const META = /\s*<!--\s*cockpit:([^>]*?)\s*-->\s*$/;
 const ANY_LINK = /<!--\s*cockpit:[^>]*-->/g;
 /** What a branch name may be inside a link: what git allows, minus anything that could close the comment. */
 export const isLinkBranch = (b: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(b) && !b.includes('..') && b.length <= 200;
 
-/** A card's text and the branch its link names. */
-function splitLink(body: string): { text: string; branch?: string } {
-  const m = LINK.exec(body);
-  return m?.[1] ? { text: body.slice(0, m.index).trim(), branch: m[1] } : { text: body };
+export const MAX_MEMBER_NAME = 40;
+/** What a member's name may be: letters, digits, spaces and a few marks, nothing that could close a comment. */
+export const isMemberName = (n: unknown): n is string =>
+  typeof n === 'string' && n.length <= MAX_MEMBER_NAME && /^[\p{L}\p{N}](?:[\p{L}\p{N} ._'-]*[\p{L}\p{N}._'])?$/u.test(n) && !n.includes('--');
+
+const UNITS: Record<string, string> = { m: 'm', min: 'm', mins: 'm', minute: 'm', minutes: 'm', h: 'h', hr: 'h', hrs: 'h', hour: 'h', hours: 'h', d: 'd', day: 'd', days: 'd', w: 'w', wk: 'w', week: 'w', weeks: 'w' };
+
+/** "2 hours" → "2h", "1h 30min" → "1h30m", "3" → "3h"; undefined for anything that is not a duration. */
+export function normalizeDuration(input: string): string | undefined {
+  const s = input.trim().toLowerCase();
+  if (!s || s.length > 30) return undefined;
+  if (/^\d+(?:\.\d+)?$/.test(s)) return Number(s) > 0 ? `${Number(s)}h` : undefined;
+  const parts = [...s.matchAll(/(\d+(?:\.\d+)?)\s*([a-z]+)\s*/g)];
+  if (parts.map((p) => p[0]).join('') !== s) return undefined;
+  let out = '';
+  let total = 0;
+  for (const [, n, unit] of parts) {
+    const u = UNITS[unit ?? ''];
+    if (!u) return undefined;
+    total += Number(n);
+    out += `${Number(n)}${u}`;
+  }
+  return total > 0 ? out : undefined;
 }
+
+interface Meta {
+  branch?: string;
+  who?: string;
+  duration?: string;
+}
+
+/** A card's text and what Cockpit's comments at the end of its line say. A comment it does not know stays in the
+ *  text, with whatever comes before it. */
+function splitMeta(body: string): Meta & { text: string } {
+  let text = body;
+  const meta: Meta = {};
+  for (let m = META.exec(text); m; m = META.exec(text)) {
+    const value = m[1] ?? '';
+    const kv = /^(who|time)=(.*)$/.exec(value);
+    if (kv?.[1] === 'who' && isMemberName(kv[2])) meta.who ??= kv[2];
+    else if (kv?.[1] === 'time' && normalizeDuration(kv[2] ?? '')) meta.duration ??= normalizeDuration(kv[2] ?? '');
+    else if (!kv && isLinkBranch(value)) meta.branch ??= value;
+    else break;
+    text = text.slice(0, m.index);
+  }
+  return { text, ...meta };
+}
+
+/** The comments for what `meta` says, in the order Cockpit writes them: who, time, then the branch link. */
+const metaComments = (meta: Meta): string =>
+  (meta.who ? ` <!-- cockpit:who=${meta.who} -->` : '') + (meta.duration ? ` <!-- cockpit:time=${meta.duration} -->` : '') + (meta.branch ? ` <!-- cockpit:${meta.branch} -->` : '');
 
 const boxOf: Record<ItemStatus, string> = { todo: ' ', doing: '~', done: 'x' };
 const statusOf = (box: string | undefined): ItemStatus => (box === undefined || box === ' ' ? 'todo' : box === 'x' || box === 'X' ? 'done' : 'doing');
@@ -106,11 +155,12 @@ function scan(text: string): Scan {
     if (!cur || /^#/.test(raw)) continue;
     const item = ITEM.exec(raw);
     if (item) {
-      const { text: body, branch } = splitLink((item[5] ?? '').trim());
+      const { text, ...meta } = splitMeta((item[5] ?? '').trim());
+      const body = text.trim();
       if (!body) continue;
       const at = { line: i, hash: hash(raw) };
       cur.items.push(at);
-      cur.plan.items.push({ id: `${at.line}:${at.hash}`, text: body, status: statusOf(item[4]), ...(branch ? { branch } : {}) });
+      cur.plan.items.push({ id: `${at.line}:${at.hash}`, text: body, status: statusOf(item[4]), ...meta });
       continue;
     }
     const field = /^(target|status)\s*:\s*(.+)$/i.exec(unwrapLabel(raw.trim()));
@@ -205,19 +255,29 @@ function laneOf(doc: Scan, name: string): { doc: Scan; lane: Lane } | undefined 
 
 const done = (doc: Scan, lines: string[]): EditResult => ({ ok: true, text: lines.join(doc.eol) });
 
-/** The item line with what `change` names changed and the rest as it was, the link included. `branch`: a branch
- *  links the card to it, null drops the link. */
-function rewrite(raw: string, change: { status?: ItemStatus; text?: string; indent?: string; branch?: string | null }): string {
+/** What a rewrite changes: each one given is set, null drops it, absent keeps it as it was. */
+interface Change {
+  status?: ItemStatus;
+  text?: string;
+  indent?: string;
+  branch?: string | null;
+  who?: string | null;
+  duration?: string | null;
+}
+
+/** The item line with what `change` names changed and the rest as it was, Cockpit's comments included. */
+function rewrite(raw: string, change: Change): string {
   const m = ITEM.exec(raw);
   if (!m) return raw;
   const indent = change.indent ?? m[1] ?? '';
   const box = change.status ? boxOf[change.status] : m[4];
   let rest = m[5] ?? '';
-  if (change.text !== undefined || change.branch !== undefined) {
-    const link = LINK.exec(rest);
-    const text = change.text ?? (link ? rest.slice(0, link.index) : rest);
-    const kept = link ? rest.slice(link.index) : '';
-    rest = change.branch === null ? text : change.branch !== undefined ? `${text} <!-- cockpit:${change.branch} -->` : `${text}${kept}`;
+  if (change.text !== undefined || change.branch !== undefined || change.who !== undefined || change.duration !== undefined) {
+    const cur = splitMeta(rest);
+    const pick = (next: string | null | undefined, old: string | undefined): string | undefined => (next === null ? undefined : (next ?? old));
+    rest =
+      (change.text ?? cur.text) +
+      metaComments({ who: pick(change.who, cur.who), duration: pick(change.duration, cur.duration), branch: pick(change.branch, cur.branch) });
   }
   return `${indent}${m[2]}${m[3]}${box === undefined ? '' : `[${box}] `}${rest}`;
 }
@@ -247,6 +307,24 @@ export function applyRoadmapEdit(text: string, edit: RoadmapEdit): EditResult {
       if (!found) return fail(STALE);
       const change = edit.op === 'setText' ? { text: clean(edit.text) } : { status: edit.status };
       if (change.text === '') return fail('A card needs some text.');
+      const lines = doc.lines.slice();
+      lines[found.at.line] = rewrite(lines[found.at.line] ?? '', change);
+      return done(doc, lines);
+    }
+
+    case 'assign':
+    case 'setDuration': {
+      const found = locate(doc, edit.id);
+      if (!found) return fail(STALE);
+      let change: Change;
+      if (edit.op === 'assign') {
+        if (edit.who !== undefined && !isMemberName(edit.who)) return fail(`"${edit.who}" cannot be written into the roadmap.`);
+        change = { who: edit.who ?? null };
+      } else {
+        const duration = edit.duration === undefined ? null : normalizeDuration(edit.duration);
+        if (duration === undefined) return fail('A duration looks like 30m, 2h, 1d or 1h30m.');
+        change = { duration };
+      }
       const lines = doc.lines.slice();
       lines[found.at.line] = rewrite(lines[found.at.line] ?? '', change);
       return done(doc, lines);
@@ -328,7 +406,7 @@ export function finishBranch(text: string, branch: string): string {
   for (const lane of doc.lanes) {
     for (const at of lane.items) {
       const raw = lines[at.line] ?? '';
-      if (splitLink((ITEM.exec(raw)?.[5] ?? '').trim()).branch === branch) lines[at.line] = rewrite(raw, { status: 'done', branch: null });
+      if (splitMeta((ITEM.exec(raw)?.[5] ?? '').trim()).branch === branch) lines[at.line] = rewrite(raw, { status: 'done', branch: null });
     }
   }
   return lines.join(doc.eol);
