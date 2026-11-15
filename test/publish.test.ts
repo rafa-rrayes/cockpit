@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseChangelog } from '../src/data/releases';
 import { parseRoadmap } from '../src/data/roadmap';
 import { emptyState, type State, type WorkItem } from '../src/model';
-import { bumpVersion, compareVersions, datedChangelog, isReleaseVersion, mergedWork, prBody, prTitle, isShipped, releaseStep, withMerged } from '../src/publish';
+import { bumpLockfile, bumpVersion, compareVersions, datedChangelog, isReleaseVersion, mergedWork, prBody, prTitle, isShipped, releaseStep, withMerged } from '../src/publish';
 
 const card = (text: string, lane = '0.2.0') => ({ text, lane });
 
@@ -157,5 +157,21 @@ describe('withMerged and mergedWork', () => {
     const lane = s.releases.roadmap[0];
     if (!lane) throw new Error('no lane');
     expect(releaseStep(lane, s)).toEqual({ step: 'release' });
+  });
+});
+
+describe('bumpLockfile', () => {
+  const lock = (top: string, root: string) =>
+    `{\n  "name": "app",\n  "version": "${top}",\n  "lockfileVersion": 3,\n  "requires": true,\n  "packages": {\n    "": {\n      "name": "app",\n      "version": "${root}",\n      "devDependencies": { "dep": "^0.2.2" }\n    },\n    "node_modules/dep": {\n      "version": "0.2.2"\n    }\n  }\n}\n`;
+
+  it('sets the root version in both places, whatever they held, and leaves dependencies alone', () => {
+    expect(bumpLockfile(lock('0.2.2', '0.2.2'), '0.3.2')).toEqual({ ok: true, text: lock('0.3.2', '0.3.2') });
+    expect(bumpLockfile(lock('0.1.0', '0.2.2'), '0.3.2')).toEqual({ ok: true, text: lock('0.3.2', '0.3.2') });
+  });
+
+  it('handles a v1 lockfile with no packages section, and refuses what is not a lockfile', () => {
+    expect(bumpLockfile('{\n  "name": "app",\n  "version": "1.0.0",\n  "lockfileVersion": 1\n}\n', '1.1.0')).toEqual({ ok: true, text: '{\n  "name": "app",\n  "version": "1.1.0",\n  "lockfileVersion": 1\n}\n' });
+    expect(bumpLockfile('not json', '1.0.0')).toEqual({ ok: false, error: 'package-lock.json is not valid JSON.' });
+    expect(bumpLockfile('{\n  "name": "app"\n}\n', '1.0.0')).toEqual({ ok: false, error: 'package-lock.json holds no version.' });
   });
 });

@@ -370,6 +370,23 @@ describe('Release and Tag (direct): a commit and a tag on the default branch', (
     expect(await draftDirect({ repoRoot: local, base: 'main', version: '0.2.0', versionFiles: [], date: '2026-11-14', remote: false })).toEqual({ ok: false, error: 'v0.2.0 is already tagged in this repository.' });
   });
 
+  it('brings package-lock.json to the new version along with package.json, even when it was left behind', async () => {
+    const dir = join(base, 'direct-lockfile');
+    makeRepo(dir);
+    const lock = (v: string) => `{\n  "name": "app",\n  "version": "${v}",\n  "lockfileVersion": 3,\n  "packages": {\n    "": {\n      "name": "app",\n      "version": "${v}"\n    }\n  }\n}\n`;
+    writeFileSync(join(dir, 'package-lock.json'), lock('0.0.9'));
+    sh(dir, ['add', '.']);
+    sh(dir, ['commit', '--quiet', '-m', 'lockfile']);
+    const drafted = await draftDirect({ repoRoot: dir, base: 'main', version: '0.2.0', versionFiles: [], date: '2026-11-14', remote: false });
+    if (!drafted.ok) throw new Error(drafted.error);
+    expect(drafted.draft.files.map((f) => [f.path, f.change])).toEqual([
+      ['package.json', '0.1.0 → 0.2.0'],
+      ['package-lock.json', '→ 0.2.0'],
+      ['CHANGELOG.md', '"## Unreleased" → "## 0.2.0 - 2026-11-14"'],
+    ]);
+    expect(drafted.draft.files.find((f) => f.path === 'package-lock.json')?.text).toBe(lock('0.2.0'));
+  });
+
   it('refuses a file it changes that has uncommitted changes, and puts the files back when the commit fails', async () => {
     writeFileSync(join(local, 'CHANGELOG.md'), `${read(join(local, 'CHANGELOG.md'))}\n- typed by hand\n`);
     expect(await draftDirect({ repoRoot: local, base: 'main', version: '0.3.0', versionFiles: [], date: '2026-11-14', remote: false })).toEqual({
