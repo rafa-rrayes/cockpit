@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Pull** reports the conflict when your uncommitted changes clash with what came in on newer git, whose
+  message changed; it said "pulled" before.
 - README: banner, screenshots, quick start; contributing guide, issue templates and CI.
 
 ## 0.3.2 - 2026-11-14
