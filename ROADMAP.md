@@ -22,9 +22,9 @@ Status: shipped
 ## 0.3.0
 Status: shipped
 
-- [x] Board in .cockpit/ and delivery modes, direct or pr (brief A in /Users/Rafa/RRayes/cockpit/tasks/todo.md)
-- [x] The cockpit command a Claude runs: status, ship, release (brief B in /Users/Rafa/RRayes/cockpit/tasks/todo.md)
-- [x] UI follows the delivery mode and says why an action is unavailable (brief C in /Users/Rafa/RRayes/cockpit/tasks/todo.md)
+- [x] Board in .cockpit/ and delivery modes, direct or pr
+- [x] The cockpit command a Claude runs: status, ship, release
+- [x] UI follows the delivery mode and says why an action is unavailable
 
 ## 0.3.1
 Status: shipped

@@ -192,7 +192,9 @@ a short note says why.
   (VS Code's **Maximize Editor Group and Hide Side Bars**, then **Close Panel**). The activity bar, the tabs and the
   status bar stay, and no setting changes. It does not toggle back, since an extension cannot tell which of these
   were open: reopen them with VS Code's own keys (⌘B, ⌥⌘B and ⌘J; Ctrl+B, Ctrl+Alt+B and Ctrl+J), and the other
-  editor groups with the restore button in the Cockpit tab's title bar.
+  editor groups with the restore button in the Cockpit tab's title bar. If margins remain on both sides of the tab,
+  the window has VS Code's Centered Layout on: turn it off with **View: Toggle Centered Layout** (Cockpit cannot,
+  since it cannot tell whether it is on).
 - **Cockpit: Refresh** reads everything again. Otherwise it updates by itself:
   - Claude sessions: when `~/.claude/sessions` changes, and every 15 s (60 s while the tab is hidden).
   - Git, the roadmap and the changelog: when the repository's refs, HEAD or worktrees change, when you save a
