@@ -7,11 +7,14 @@ import type {
   ClaudeSession,
   Project,
   PullRequest,
+  CatchUpMark,
   Releases,
+  Settings,
   State,
   WorkItem,
 } from './model';
 import { sortItems } from './data/git';
+import { defaultSettings } from './settings';
 
 export interface GitResult {
   available: boolean;
@@ -38,6 +41,10 @@ export interface ComposeInput {
   releases?: Releases;
   /** Recent commits on the default branch (git.ts recentCommits). */
   commits?: ActivityEvent[];
+  /** Absent: the defaults. */
+  settings?: Settings;
+  /** When the person last caught up (workspace state). */
+  caughtUp?: CatchUpMark;
 }
 
 const ACTIVITY_LIMIT = 60;
@@ -175,7 +182,29 @@ function latestRunsPerWorkflow(runs: CiRun[], branch: string): CiRun[] {
   return [...latest.values()];
 }
 
-export function buildAttention(sessions: ClaudeSession[], projects: Project[], github: GithubResult | undefined, defaultBranch: string | undefined): Attention[] {
+/** Worktrees a Claude stopped in with work left uncommitted: no session on the branch is working or waiting (the
+ *  newest one is idle or ended) and the worktree has uncommitted files. The main checkout is left out: the board's
+ *  own ROADMAP.md edits live there. */
+export function stoppedWithChanges(items: WorkItem[], sessions: ClaudeSession[], repoRoot: string | undefined): { item: WorkItem; session: ClaudeSession }[] {
+  const byId = new Map(sessions.map((s) => [s.sessionId, s]));
+  const out: { item: WorkItem; session: ClaudeSession }[] = [];
+  for (const item of items) {
+    if (item.isDefault || !item.worktreePath || item.worktreePath === repoRoot || item.dirtyCount === 0) continue;
+    const own = item.sessionIds.map((id) => byId.get(id)).filter((s) => s !== undefined);
+    const newest = own[0];
+    if (newest && own.every((s) => s.status === 'idle' || s.status === 'ended')) out.push({ item, session: newest });
+  }
+  return out;
+}
+
+export function buildAttention(
+  sessions: ClaudeSession[],
+  projects: Project[],
+  github: GithubResult | undefined,
+  defaultBranch: string | undefined,
+  items: WorkItem[] = [],
+  repoRoot?: string,
+): Attention[] {
   const projectName = new Map(projects.map((p) => [p.key, p.name]));
   const out: Attention[] = [];
   for (const s of [...sessions].sort(byRecency)) {
@@ -183,6 +212,10 @@ export function buildAttention(sessions: ClaudeSession[], projects: Project[], g
     const where = projectName.get(s.projectKey);
     const why = s.waitingFor ? `Waiting: ${s.waitingFor}` : 'Waiting for you';
     out.push({ kind: 'session_waiting', title: s.title, detail: where ? `${why} · ${where}` : why, sessionId: s.sessionId, at: s.updatedAt });
+  }
+  for (const { item, session } of stoppedWithChanges(items, sessions, repoRoot)) {
+    const files = `${item.dirtyCount} uncommitted file${item.dirtyCount === 1 ? '' : 's'}`;
+    out.push({ kind: 'session_uncommitted', title: session.title, detail: `${files} in ${item.branch}`, sessionId: session.sessionId, at: session.updatedAt });
   }
   if (github && defaultBranch) {
     for (const r of latestRunsPerWorkflow(github.ciRuns, defaultBranch)) {
@@ -238,10 +271,12 @@ export function compose(input: ComposeInput): State {
   const { sessions, git, github } = input;
   const projects = buildProjects(sessions, input.workspaceProjectKey);
   const items = git?.available ? buildItems(git, sessions, github?.prs ?? []) : [];
+  // Reports are long: only this project's sessions carry theirs to the page.
+  const shown = sessions.map((s) => (s.report === undefined || s.projectKey === input.workspaceProjectKey ? s : { ...s, report: undefined }));
   const state: State = {
     generatedAt: input.now,
-    attention: buildAttention(sessions, projects, github, git?.defaultBranch),
-    sessions: Object.fromEntries(sessions.map((s) => [s.sessionId, s])),
+    attention: buildAttention(sessions, projects, github, git?.defaultBranch, items, git?.repoRoot),
+    sessions: Object.fromEntries(shown.map((s) => [s.sessionId, s])),
     projects,
     work: {
       available: git?.available ?? false,
@@ -250,11 +285,13 @@ export function compose(input: ComposeInput): State {
     },
     releases: input.releases ?? noReleases(),
     activity: buildActivity(sessions, projects, github, input.commits ?? []),
+    settings: input.settings ?? defaultSettings,
   };
   if (input.workspace) state.workspace = input.workspace;
   if (git?.repoRoot) state.work.repoRoot = git.repoRoot;
   if (git?.defaultBranch) state.work.defaultBranch = git.defaultBranch;
   if (github?.github) state.work.github = github.github;
   if (github?.githubNote) state.work.githubNote = github.githubNote;
+  if (input.caughtUp) state.caughtUp = input.caughtUp;
   return state;
 }

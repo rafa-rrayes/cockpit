@@ -210,6 +210,24 @@ describe('buildAttention', () => {
     expect(out.map((a) => [a.kind, a.title, a.url])).toEqual([['ci_failed', 'Deploy failed on main', 'https://github.com/acme/shop/actions/runs/3']]);
   });
 
+  it('a Claude that stopped with uncommitted files in its own worktree, not one still at work nor the main checkout', () => {
+    const sessions = [
+      session('done', { status: 'idle', live: true, updatedAt: NOW }),
+      session('busy', { status: 'busy', live: true, updatedAt: NOW }),
+      session('main', { status: 'ended', updatedAt: NOW }),
+    ];
+    const wt = (b: string, ids: string[], dirtyCount = 3) => item(b, { worktreePath: `${REPO}-wt/${b}`, sessionIds: ids, dirtyCount });
+    const work = [
+      wt('stopped', ['done']),
+      wt('working', ['busy']),
+      wt('clean', ['done'], 0),
+      wt('nobody', []),
+      item('main', { isDefault: true, worktreePath: REPO, sessionIds: ['main'], dirtyCount: 2 }),
+    ];
+    const out = buildAttention(sessions, projects, undefined, 'main', work, REPO);
+    expect(out).toEqual([{ kind: 'session_uncommitted', title: 'Title done', detail: '3 uncommitted files in stopped', sessionId: 'done', at: NOW }]);
+  });
+
   it('open PRs with changes requested', () => {
     const github: GithubResult = {
       prs: [pr(7, 'a', { reviewDecision: 'changes_requested' }), pr(6, 'b', { reviewDecision: 'changes_requested', state: 'closed' }), pr(5, 'c', { reviewDecision: 'approved' })],

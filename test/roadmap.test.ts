@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { applyRoadmapEdit, nextMinor, parseRoadmap, starterRoadmap } from '../src/data/roadmap';
+import { applyRoadmapEdit, finishBranch, linkCard, nextMinor, parseRoadmap, setLaneStatus, starterRoadmap } from '../src/data/roadmap';
 import { parseRoadmapEdit } from '../src/guards';
 import type { RoadmapEdit } from '../src/model';
 
@@ -175,6 +175,69 @@ describe('applyRoadmapEdit', () => {
     expect(lanes['1.3.0']).toEqual(['todo:Card checkout in USD']);
     expect(lanes.Later).toEqual(['todo:Dark theme']);
     expect(lanes['3.0.0']).toEqual([]);
+  });
+});
+
+describe('branch links', () => {
+  const LINKED = DOC.replace('- [~] Video feed\n', '- [~] Video feed <!-- cockpit:worktree-1.2.0-video-feed -->\n');
+  const video = () => parseRoadmap(LINKED)[0]?.items.find((i) => i.text === 'Video feed');
+  const lineOf = (text: string, card: string) => text.split('\n').find((l) => l.includes(card));
+
+  it('reads the link as the card branch, out of its text', () => {
+    expect(video()).toMatchObject({ text: 'Video feed', status: 'doing', branch: 'worktree-1.2.0-video-feed' });
+    expect(parseRoadmap(DOC)[0]?.items.find((i) => i.text === 'Video feed')?.branch).toBeUndefined();
+    // Only at the end of the line, and only Cockpit's.
+    expect(parseRoadmap('## 1.0\n- [ ] a <!-- cockpit:b --> more\n- [ ] c <!-- note -->\n')[0]?.items.map((i) => [i.text, i.branch])).toEqual([
+      ['a <!-- cockpit:b --> more', undefined],
+      ['c <!-- note -->', undefined],
+    ]);
+  });
+
+  it('keeps the link through a rename, a status change, a move to another lane and a drag before a card', () => {
+    const vid = id(LINKED, 'Video feed');
+    const renamed = edit(LINKED, { op: 'setText', id: vid, text: 'Video feed v2' });
+    expect(lineOf(renamed, 'Video feed')).toBe('- [~] Video feed v2 <!-- cockpit:worktree-1.2.0-video-feed -->');
+    expect(lineOf(edit(LINKED, { op: 'setStatus', id: vid, status: 'done' }), 'Video feed')).toBe('- [x] Video feed <!-- cockpit:worktree-1.2.0-video-feed -->');
+    const moved = edit(LINKED, { op: 'move', id: vid, lane: 'Backlog', status: 'todo' });
+    expect(lineOf(moved, 'Video feed')).toBe('- [ ] Video feed <!-- cockpit:worktree-1.2.0-video-feed -->');
+    expect(moved).toContain('<!-- cockpit:worktree-1.2.0-video-feed -->\n  wrapped text of the video feed');
+    const dragged = edit(LINKED, { op: 'move', id: vid, lane: '1.2.0', status: 'doing', before: id(LINKED, 'Seasons') });
+    expect(parseRoadmap(dragged)[0]?.items[0]).toMatchObject({ text: 'Video feed', branch: 'worktree-1.2.0-video-feed' });
+  });
+
+  it('drops a link typed into a card text', () => {
+    const typed = edit(DOC, { op: 'setText', id: id(DOC, 'Comments'), text: 'Comments <!-- cockpit:evil -->' });
+    expect(lineOf(typed, 'Comments')).toBe('- [ ] Comments');
+    expect(edit(DOC, { op: 'add', lane: 'Backlog', text: 'x <!-- cockpit:y -->' })).toContain('- [ ] x\n');
+  });
+
+  it('links a card, replacing its old link, and refuses a name that is not a branch', () => {
+    const linked = linkCard(DOC, id(DOC, 'Comments'), 'worktree-1.2.0-comments', 'doing');
+    expect(linked.ok && lineOf(linked.text, 'Comments')).toBe('- [~] Comments <!-- cockpit:worktree-1.2.0-comments -->');
+    const relinked = linkCard(LINKED, id(LINKED, 'Video feed'), 'other');
+    expect(relinked.ok && lineOf(relinked.text, 'Video feed')).toBe('- [~] Video feed <!-- cockpit:other -->');
+    expect(linkCard(DOC, id(DOC, 'Comments'), 'a --> b')).toMatchObject({ ok: false });
+    expect(linkCard(DOC, '99:zzz', 'b')).toMatchObject({ ok: false });
+  });
+
+  it('finishes the cards of a branch: done and unlinked, everything else as it was', () => {
+    const two = LINKED.replace('- [ ] Tablet layout', '- [ ] Tablet layout <!-- cockpit:worktree-1.2.0-video-feed -->').replace('- [ ] Comments', '- [ ] Comments <!-- cockpit:other -->');
+    const out = finishBranch(two, 'worktree-1.2.0-video-feed');
+    expect(out).toBe(two.replace('- [~] Video feed <!-- cockpit:worktree-1.2.0-video-feed -->', '- [x] Video feed').replace('- [ ] Tablet layout <!-- cockpit:worktree-1.2.0-video-feed -->', '- [x] Tablet layout'));
+    expect(finishBranch(DOC, 'nothing-linked')).toBe(DOC);
+  });
+
+  it("sets a release's status, rewriting the line it has or adding one under the heading", () => {
+    const st = (text: string, v: string) => {
+      const r = setLaneStatus(text, v, 'shipped');
+      if (!r.ok) throw new Error(r.error);
+      return r.text;
+    };
+    expect(st(DOC, '1.3.0')).toBe(DOC.replace('## 1.3.0\n', '## 1.3.0\nStatus: shipped\n'));
+    expect(st(DOC, '1.2.0')).toBe(DOC.replace('Target: week of 2026-11-16\n', 'Target: week of 2026-11-16\nStatus: shipped\n'));
+    expect(st('## 1.0\nStatus: in progress\n- [x] a\n', '1.0')).toBe('## 1.0\nStatus: shipped\n- [x] a\n');
+    expect(st('## 1.0\n**Status:** in progress\n', '1.0')).toBe('## 1.0\n**Status:** shipped\n');
+    expect(setLaneStatus(DOC, 'Backlog', 'shipped')).toMatchObject({ ok: false });
   });
 });
 

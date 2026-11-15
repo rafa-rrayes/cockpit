@@ -1,9 +1,16 @@
-// The sticky top bar: where you are, what is running at a glance, a jump list for the sections, Refresh.
+// The sticky top bar, one compact row: where you are, a jump list for the sections, what is running at a glance,
+// Refresh, Maximize and the settings popover.
 import type { JSX } from 'preact';
-import type { SessionStatus } from '../../src/model';
+import { useRef, useState } from 'preact/hooks';
+import { catchUp } from '../../src/catchup';
+import type { SectionId, SessionStatus } from '../../src/model';
 import { useCockpit } from '../context';
 import { Icon } from '../icons';
-import { Ago } from '../ui';
+import { Ago, useDismiss } from '../ui';
+import { SettingsPopover } from './Settings';
+
+/** The keybinding package.json gives cockpit.maximize. */
+const MAXIMIZE_KEYS = /Mac/.test(navigator.userAgent) ? '⌃⌘M' : 'Ctrl+Alt+M';
 
 const jump = (id: string): void => {
   const target = document.getElementById(id);
@@ -15,14 +22,24 @@ const jump = (id: string): void => {
 };
 
 export function Header(): JSX.Element {
-  const { state, post } = useCockpit();
+  const { state, post, openCatchUp } = useCockpit();
+  const news = catchUp(state).length;
   const sessions = Object.values(state.sessions);
   const count = (status: SessionStatus): number => sessions.filter((s) => s.status === status).length;
   const working = count('busy');
   const waiting = count('waiting');
   const idle = count('idle');
 
-  const nav: { id: string; label: string; show: boolean; badge?: number }[] = [
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsRoot = useRef<HTMLSpanElement>(null);
+  const settingsButton = useRef<HTMLButtonElement>(null);
+  useDismiss(settingsRoot, settingsOpen, (byKey) => {
+    setSettingsOpen(false);
+    if (byKey) settingsButton.current?.focus();
+  });
+  const hidden = new Set(state.settings.hiddenSections);
+
+  const nav: { id: SectionId; label: string; show: boolean; badge?: number }[] = [
     { id: 'needs', label: 'Needs you', show: state.attention.length > 0, badge: state.attention.length },
     { id: 'claudes', label: 'Claudes', show: true },
     { id: 'roadmap', label: 'Roadmap', show: Boolean(state.releases.roadmapPath) },
@@ -34,14 +51,19 @@ export function Header(): JSX.Element {
   return (
     <header class="topbar">
       <div class="topbar-row">
-        <div class="brand">
-          <h1>{state.workspace?.name ?? 'Cockpit'}</h1>
-          {state.workspace && (
-            <span class="brand-path" title={state.workspace.path}>
-              {state.workspace.path}
-            </span>
-          )}
-        </div>
+        <h1 class="brand" title={state.workspace?.path}>
+          {state.workspace?.name ?? 'Cockpit'}
+        </h1>
+        <nav class="jump" aria-label="Sections">
+          {nav
+            .filter((n) => n.show && !hidden.has(n.id))
+            .map((n) => (
+              <button type="button" key={n.id} class={n.badge ? 'jump-link jump-attention' : 'jump-link'} onClick={() => jump(n.id)}>
+                {n.label}
+                {n.badge !== undefined && n.badge > 0 && <span class="badge">{n.badge}</span>}
+              </button>
+            ))}
+        </nav>
         <p class="pulse" aria-label="Claude sessions right now">
           <span class="pulse-item">
             <span class="dot dot-busy" aria-hidden="true" />
@@ -56,6 +78,16 @@ export function Header(): JSX.Element {
             {idle} idle
           </span>
         </p>
+        <button
+          type="button"
+          class={news ? 'btn btn-small catchup-button catchup-new' : 'btn btn-small catchup-button'}
+          title="What finished, waits or changed since you last looked"
+          aria-haspopup="dialog"
+          onClick={openCatchUp}
+        >
+          Catch up
+          {news > 0 && <span class="badge">{news}</span>}
+        </button>
         <span class="topbar-end">
           <span class="updated">
             Updated <Ago at={state.generatedAt} long />
@@ -63,18 +95,26 @@ export function Header(): JSX.Element {
           <button type="button" class="btn btn-icon" title="Refresh" aria-label="Refresh" onClick={() => post({ type: 'refresh' })}>
             <Icon name="refresh" />
           </button>
+          <button type="button" class="btn btn-icon" title={`Maximize or restore (${MAXIMIZE_KEYS})`} aria-label="Maximize or restore" onClick={() => post({ type: 'toggleMaximize' })}>
+            <Icon name="maximize" />
+          </button>
+          <span class="set-anchor" ref={settingsRoot}>
+            <button
+              ref={settingsButton}
+              type="button"
+              class="btn btn-icon"
+              title="Settings"
+              aria-label="Settings"
+              aria-haspopup="dialog"
+              aria-expanded={settingsOpen}
+              onClick={() => setSettingsOpen((o) => !o)}
+            >
+              <Icon name="settings" />
+            </button>
+            {settingsOpen && <SettingsPopover />}
+          </span>
         </span>
       </div>
-      <nav class="jump" aria-label="Sections">
-        {nav
-          .filter((n) => n.show)
-          .map((n) => (
-            <button type="button" key={n.id} class={n.badge ? 'jump-link jump-attention' : 'jump-link'} onClick={() => jump(n.id)}>
-              {n.label}
-              {n.badge !== undefined && n.badge > 0 && <span class="badge">{n.badge}</span>}
-            </button>
-          ))}
-      </nav>
     </header>
   );
 }

@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ghNote, parsePullRequests, parseRuns, readGithub, runStatus, summarizeChecks } from '../src/data/github';
+import { ghNote, parseJobs, parsePullRequests, parseRuns, readGithub, runStatus, summarizeChecks } from '../src/data/github';
 import { loadGithub } from '../src/sources';
 
 const fixture = (name: string) => readFileSync(join(__dirname, 'fixtures/github', name), 'utf8');
@@ -161,5 +161,25 @@ describe('readGithub', () => {
     process.env.PATH = `${join(base, 'bin')}:${path ?? ''}`;
     fakeGh(`case "$1" in repo) echo '{"nameWithOwner":"acme/shop"}';; pr) echo '[]';; run) echo '[]';; esac`);
     expect(await loadGithub(base, good)).toEqual({ github: 'acme/shop', prs: [], ciRuns: [] });
+  });
+});
+
+describe('parseJobs', () => {
+  it('reads jobs with their status, skipping the unnamed', () => {
+    const jobs = parseJobs(
+      JSON.stringify({
+        jobs: [
+          { name: 'changes', status: 'completed', conclusion: 'success', startedAt: '2026-01-01T00:00:00Z', completedAt: '2026-01-01T00:00:09Z', url: 'https://github.com/o/r/job/1' },
+          { name: 'core', status: 'in_progress', conclusion: '' },
+          { name: 'app', status: 'completed', conclusion: 'skipped' },
+          { status: 'queued' },
+        ],
+      }),
+    );
+    expect(jobs.map((j) => [j.name, j.status])).toEqual([['changes', 'success'], ['core', 'in_progress'], ['app', 'skipped']]);
+    expect(jobs[0]?.durationMs).toBe(9000);
+  });
+  it('gives nothing for bad output', () => {
+    expect(parseJobs('nope')).toEqual([]);
   });
 });

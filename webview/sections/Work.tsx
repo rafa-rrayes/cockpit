@@ -1,5 +1,6 @@
 // Branches and worktrees as a board (In progress / Merged / Stale) with their PRs and Claudes, and CI below.
 import type { JSX } from 'preact';
+import { canShip } from '../../src/catchup';
 import type { CiRun, ClaudeSession, PullRequest, WorkGroup, WorkItem } from '../../src/model';
 import { useCockpit } from '../context';
 import { baseName, duration, plural } from '../format';
@@ -110,6 +111,13 @@ function ItemCard({ item }: { item: WorkItem }): JSX.Element {
         </p>
       )}
       {item.pr && <PrRow pr={item.pr} />}
+      {canShip(item, state) && (
+        <div class="work-ship">
+          <button type="button" class="btn btn-small" title="Pushes the branch and opens its pull request, after showing both" onClick={() => post({ type: 'ship', branch: item.branch })}>
+            <Icon name="pr" /> Ship…
+          </button>
+        </div>
+      )}
       {sessions.length > 0 && (
         <ul class="work-sessions" aria-label="Claudes on this branch">
           {sessions.map((s) => (

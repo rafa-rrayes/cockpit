@@ -2,10 +2,13 @@
 // survives State updates and, inside VS Code, reloads of the webview.
 import type { JSX } from 'preact';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { State } from '../src/model';
+import { parseLaunchOptions } from '../src/launch';
+import type { SectionId, State } from '../src/model';
 import { type Cockpit, CockpitContext, type UiState } from './context';
 import { host } from './host';
 import { Activity } from './sections/Activity';
+import { CatchUp } from './sections/CatchUp';
+import { CiRunning } from './sections/CiRunning';
 import { Claudes } from './sections/Claudes';
 import { DevLog } from './sections/DevLog';
 import { Detail } from './sections/Detail';
@@ -35,12 +38,14 @@ function restoreUi(saved: unknown): UiState {
     open,
     detail: typeof saved.detail === 'string' ? saved.detail : undefined,
     expanded,
+    launch: parseLaunchOptions(saved.launch),
   };
 }
 
 export function App(): JSX.Element {
   const [state, setState] = useState<State | null>(null);
   const [ui, setUi] = useState<UiState>(() => restoreUi(host.getUiState()));
+  const [catchingUp, setCatchingUp] = useState(false);
   const returnFocus = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -66,19 +71,34 @@ export function App(): JSX.Element {
     setUi((prev) => ({ ...prev, detail: sessionId }));
   }, []);
 
-  const closeDetail = useCallback(() => {
-    setUi((prev) => ({ ...prev, detail: undefined }));
-    // After the drawer unmounts and the page is no longer inert.
+  // After a drawer unmounts and the page is no longer inert.
+  const refocus = (): void => {
     requestAnimationFrame(() => {
       const target = returnFocus.current;
       if (target?.isConnected) target.focus();
       returnFocus.current = null;
     });
+  };
+
+  const closeDetail = useCallback(() => {
+    setUi((prev) => ({ ...prev, detail: undefined }));
+    refocus();
+  }, []);
+
+  const openCatchUp = useCallback(() => {
+    returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setCatchingUp(true);
+  }, []);
+
+  const closeCatchUp = useCallback(() => {
+    setCatchingUp(false);
+    host.post({ type: 'caughtUp' });
+    refocus();
   }, []);
 
   const cockpit = useMemo<Cockpit | null>(
-    () => (state ? { state, ui, update, post: host.post, openSession } : null),
-    [state, ui, update, openSession],
+    () => (state ? { state, ui, update, post: host.post, openSession, openCatchUp } : null),
+    [state, ui, update, openSession, openCatchUp],
   );
 
   if (!cockpit) {
@@ -93,21 +113,25 @@ export function App(): JSX.Element {
   }
 
   const detail = ui.detail ? cockpit.state.sessions[ui.detail] : undefined;
+  const hidden = new Set(cockpit.state.settings.hiddenSections);
+  const show = (id: SectionId): boolean => !hidden.has(id);
 
   return (
     <CockpitContext.Provider value={cockpit}>
       <div class="app">
-        <div class="page" inert={detail !== undefined}>
+        <div class="page" inert={detail !== undefined || catchingUp}>
           <Header />
           <main class="sections">
-            <NeedsYou />
-            <Claudes />
-            {cockpit.state.releases.roadmapPath && <Roadmap />}
-            {cockpit.state.work.available && <Work />}
-            {cockpit.state.releases.available && <Releases />}
-            <Activity />
+            {show('needs') && <NeedsYou />}
+            {show('claudes') && <Claudes />}
+            <CiRunning />
+            {show('roadmap') && cockpit.state.releases.roadmapPath && <Roadmap />}
+            {show('work') && cockpit.state.work.available && <Work />}
+            {show('releases') && cockpit.state.releases.available && <Releases />}
+            {show('activity') && <Activity />}
           </main>
         </div>
+        {catchingUp && <CatchUp onClose={closeCatchUp} />}
         {detail && <Detail session={detail} onClose={closeDetail} />}
         {host.isDev && <DevLog />}
       </div>

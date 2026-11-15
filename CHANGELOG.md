@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+- Maximize: a button next to Refresh and **Cockpit: Maximize** (⌃⌘M, Ctrl+Alt+M on Windows and Linux) close the
+  side bars and the panel around the Cockpit tab. The same keys, or the button again, restore the layout as it was.
+  It is Zen mode, whose defaults Cockpit changes: no full screen, no centered layout, the status bar, activity bar
+  and notifications kept.
+- The top bar is one compact row: the name (with the path as its tooltip), the section links, the session counts,
+  Refresh and Maximize.
+- Start Claude from the roadmap: right-click a card (Cmd/Ctrl-click to select several, in any lane, as one batch)
+  and pick **Start Claude…**. Choose the model and the thinking effort; pull the thinking slider down for a
+  second slider with up to 8 subagents, and that one down again to pick the model the subagents run on. A new terminal runs `claude` with a standard prompt, in a worktree of its own,
+  and the planned cards move to In progress. The launcher remembers the last choices.
+- Settings: a sliders button at the end of the top bar opens a small popover with every Cockpit setting: opening on
+  startup, how many days of ended sessions, how often to ask GitHub, which sections to show, what **Start Claude…**
+  opens with (model, thinking, subagents and their model, worktree, mark in progress), and the steps of its prompt,
+  one per line. Changes go to your user settings; **All settings…** opens them in VS Code.
+- Settings have two tabs: **All projects** (your user settings) and **This project** (the workspace's
+  `.vscode/settings.json`). The prompt steps and the files Release bumps belong to a project: they are read from
+  the workspace's settings only, so a value set for one project never applies to another.
+- Claudes: **Show all active projects**. Off, the section shows only this window's Claudes, as cards without the
+  project heading, and its counts are this project's. The choice is yours for every window.
+- Cards link to branches: **Start Claude…** records the branch it starts on (`worktree-<name>`) on each card, as an
+  HTML comment at the end of the card's line in `ROADMAP.md`. A linked card shows its branch and its pull request.
+- Worktree names start with the lane: `1.5.0-welcome-link-lifetime`, `backlog-tablet-layout`.
+- Catch up: a button in the top bar, with a count, opens what changed since you last closed it: the Claudes that
+  finished or are waiting, with their branch, commits, uncommitted files, pull request, cards and last answer, each
+  with its next action; and the pull requests whose checks passed or failed or that merged. A Claude's last answer
+  also shows in the session details, and each item of its "still open" list has **Add as card** into its lane.
+- Ship…: pushes a finished branch and opens its pull request through `gh`, after a dialog showing the title and the
+  body (the cards and the Claude's report). `ROADMAP.md`, with the branch's cards done, is committed on the branch,
+  so the board travels with the merge.
+- When a linked pull request merges, the main checkout's `ROADMAP.md` reads as the merge has it (cards done and
+  unlinked, a merged release shipped), so **Pull main** (in Catch up) leaves it clean.
+- Release…: on a lane whose cards are all done, opens a `release-X` pull request that bumps the version, dates the
+  changelog and marks the lane shipped, made in a temporary worktree from `origin`. Once it merges, **Tag vX…** tags
+  the merge commit and pushes the tag, after a dialog that says a tag may deploy.
+- A new setting, `cockpit.release.versionFiles` (also in the Settings popover): files whose version Release bumps
+  besides `package.json`.
+- Needs you lists a Claude that stopped with uncommitted files in its worktree.
+
 ## 0.1.1 - 2026-11-13
 
 - Roadmap board: a new section with a lane for each release in `ROADMAP.md` plus a Backlog, and the columns

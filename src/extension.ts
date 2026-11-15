@@ -3,7 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import { basename, join } from 'node:path';
 import * as vscode from 'vscode';
-import { handleMessage } from './actions';
+import { type ActionHost, handleMessage, syncMerged } from './actions';
 import type { HostMessage, State } from './model';
 import { defaultClaudeDir } from './sources';
 import { Store } from './store';
@@ -72,7 +72,13 @@ class CockpitPanel implements vscode.Disposable {
     private readonly store: Store,
     private readonly windows: WindowRegistry,
   ) {
-    this.disposables.push(store.onDidChange(() => this.post()));
+    this.disposables.push(
+      store.onDidChange(() => {
+        this.post();
+        // A pull request that merged is on the board now: ROADMAP.md follows it.
+        void syncMerged(this.host).catch((e: unknown) => void vscode.window.showErrorMessage(`Cockpit: ${e instanceof Error ? e.message : String(e)}`));
+      }),
+    );
     // A Cockpit tab that is visible after a reload is revived right after activation: wait for it instead of
     // opening a second one. A restored tab in the background is only revived when shown, so it is replaced.
     if (cockpitTabs().some((t) => t.isActive)) {
@@ -168,21 +174,25 @@ class CockpitPanel implements vscode.Disposable {
     this.store.setVisible(panel.visible);
   }
 
+  /** What actions.ts acts through. */
+  private readonly host: ActionHost = {
+    state: () => this.store.state,
+    refresh: () => this.store.refresh(),
+    refreshLocal: () => this.store.refreshLocal(),
+    refreshGit: () => this.store.refreshGit(),
+    otherWindowFolders: () => this.windows.otherFolders(),
+    terminalFor: (id) => this.store.terminalFor(id),
+    roadmapChanged: (text) => this.store.setRoadmap(text),
+    caughtUp: (mark) => this.store.setCaughtUp(mark),
+    resend: () => {
+      this.ready = true;
+      this.post();
+    },
+  };
+
   /** A message from the webview (the smoke test sends them through here too). */
   receive(raw: unknown): Promise<void> {
-    return handleMessage(raw, {
-      state: () => this.store.state,
-      refresh: () => this.store.refresh(),
-      refreshLocal: () => this.store.refreshLocal(),
-      refreshGit: () => this.store.refreshGit(),
-      otherWindowFolders: () => this.windows.otherFolders(),
-      terminalFor: (id) => this.store.terminalFor(id),
-      roadmapChanged: (text) => this.store.setRoadmap(text),
-      resend: () => {
-        this.ready = true;
-        this.post();
-      },
-    });
+    return handleMessage(raw, this.host);
   }
 
   private post(): void {
@@ -245,6 +255,7 @@ export function activate(context: vscode.ExtensionContext): CockpitTestApi {
     workspace: folder ? { name: folder.name || basename(folder.uri.fsPath), path: folder.uri.fsPath } : undefined,
     claudeDir: defaultClaudeDir(),
     log: (line) => log.warn(line),
+    memory: context.workspaceState,
   });
   // Every window records its folders, so "Clean merged" in one never removes a worktree another one shows.
   const windows = new WindowRegistry(join(context.globalStorageUri.fsPath, 'windows'));
@@ -268,6 +279,13 @@ export function activate(context: vscode.ExtensionContext): CockpitTestApi {
     attentionIndicators(store, view),
     vscode.commands.registerCommand('cockpit.open', () => panel.open()),
     vscode.commands.registerCommand('cockpit.refresh', () => store.refresh()),
+    // Maximizing is Zen mode with the Cockpit tab in front: VS Code restores the side bars and the panel exactly as
+    // they were, which an extension cannot (it can close them but not read whether they were open). The keybinding
+    // only calls this outside Zen mode; inside it the same keys run workbench.action.exitZenMode.
+    vscode.commands.registerCommand('cockpit.maximize', async () => {
+      await panel.open();
+      await vscode.commands.executeCommand('workbench.action.toggleZenMode');
+    }),
     vscode.window.registerWebviewPanelSerializer(VIEW_TYPE, {
       deserializeWebviewPanel: async (restored) => panel.restore(restored),
     }),

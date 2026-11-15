@@ -1,6 +1,7 @@
 // An invented State for the browser preview (dev.html): three projects, sessions in every status, a busy board.
 // The shapes match what the host sends; every name, path, prompt and id is made up.
 import { parseRoadmap } from '../src/data/roadmap';
+import { defaultSettings } from '../src/settings';
 import type { ActivityEvent, ActivityKind, ClaudeSession, State, Subagent, WorkItem } from '../src/model';
 
 const MIN = 60_000;
@@ -21,6 +22,16 @@ export const sampleRoadmap = `# Roadmap
 
 What ships next, release by release.
 
+## 1.4.1 — Hotfix
+Status: shipped
+
+- [x] Crash when a product has no photo
+
+## 1.4.2 — Small fixes
+
+- [x] Faster first load on slow connections
+- [x] The date picker works in Safari
+
 ## 1.5.0 — Checkout
 Target: week of 2026-11-23
 Status: in progress
@@ -28,8 +39,10 @@ Status: in progress
 - [x] Order summary visible on small phones
 - [x] Round prices consistently
 - [x] Seller badges on the profile
-- [~] Payment step on its own screen
-- [ ] Daily push digest
+- [~] Payment step on its own screen <!-- cockpit:feat/checkout-redesign -->
+- [~] Welcome link lifetime as an env var <!-- cockpit:worktree-1.5.0-welcome-link-lifetime -->
+- [~] Seller payouts export <!-- cockpit:worktree-1.5.0-seller-payouts -->
+- [~] Daily push digest <!-- cockpit:feat/push-digest -->
 
 ## 1.6.0 — Offline drafts
 Target: December
@@ -248,6 +261,44 @@ export function sampleState(now = Date.now()): State {
       claudeVersion: '2.3.9',
     }),
     session({
+      sessionId: 'f3a1c7e9-6b20-4d58-a9e3-5c7d1b0f8e42',
+      live: false,
+      status: 'ended',
+      title: 'Welcome link lifetime as an env var',
+      cwd: `${HARBOR}/.claude/worktrees/1.5.0-welcome-link-lifetime`,
+      projectKey: HARBOR,
+      gitBranch: 'worktree-1.5.0-welcome-link-lifetime',
+      lastPrompt: 'Work on this card from the roadmap of harbor (ROADMAP.md): Welcome link lifetime as an env var (1.5.0)',
+      startedAt: ago(2 * HOUR),
+      updatedAt: ago(38 * MIN),
+      report: [
+        '## What changed',
+        '- The welcome link lifetime comes from `WELCOME_LINK_TTL_HOURS` (default 72), read once at startup.',
+        '- An expired link shows a page that offers a new link instead of a bare 404.',
+        '',
+        '## How I verified it',
+        '- `npm test`: 214 passed, 6 of them new, for the expiry page.',
+        '- Ran the server with the variable at 1 and opened an expired link by hand.',
+        '',
+        '## Still open',
+        '- Create the production API token for the mailer (it needs an admin account)',
+        '- Set `WELCOME_LINK_TTL_HOURS` in the production environment',
+      ].join('\n'),
+    }),
+    session({
+      sessionId: '1d6b0e4f-8c35-4a92-b7f1-e2a9c5d3f086',
+      live: false,
+      status: 'ended',
+      title: 'Seller payouts export',
+      cwd: `${HARBOR}/.claude/worktrees/1.5.0-seller-payouts`,
+      projectKey: HARBOR,
+      gitBranch: 'worktree-1.5.0-seller-payouts',
+      lastPrompt: 'Work on this card from the roadmap of harbor (ROADMAP.md): Seller payouts export (1.5.0)',
+      startedAt: ago(3 * HOUR),
+      updatedAt: ago(52 * MIN),
+      report: 'I committed the payout schedule. The CSV export is half done: the column mapping and its tests are not committed yet, and two tests fail on rounding.\n\n**Left open:** finishing the export.',
+    }),
+    session({
       sessionId: 'd2c5a9f0-1e7b-4a83-96d4-b0e7f3c18a25',
       live: false,
       status: 'ended',
@@ -335,6 +386,27 @@ export function sampleState(now = Date.now()): State {
       lastCommitSubject: 'Onboarding: one sentence per screen',
       pr: { number: 208, title: 'Shorter onboarding copy', url: `${GH}/pull/208`, branch: 'feat/onboarding-copy', isDraft: false, state: 'open', reviewDecision: 'changes_requested', checks: { state: 'success', url: `${GH}/pull/208/checks` }, updatedAt: ago(5 * HOUR) },
       sessionIds: [id('Onboarding copy review')],
+    }),
+    item({
+      branch: 'worktree-1.5.0-welcome-link-lifetime',
+      group: 'active',
+      worktreePath: `${HARBOR}/.claude/worktrees/1.5.0-welcome-link-lifetime`,
+      ahead: 3,
+      pushed: false,
+      lastCommitAt: ago(40 * MIN),
+      lastCommitSubject: 'Welcome links: expired page offers a new link',
+      sessionIds: [id('Welcome link lifetime as an env var')],
+    }),
+    item({
+      branch: 'worktree-1.5.0-seller-payouts',
+      group: 'active',
+      worktreePath: `${HARBOR}/.claude/worktrees/1.5.0-seller-payouts`,
+      dirtyCount: 10,
+      ahead: 1,
+      pushed: false,
+      lastCommitAt: ago(70 * MIN),
+      lastCommitSubject: 'Payouts: weekly schedule per seller',
+      sessionIds: [id('Seller payouts export')],
     }),
     item({
       branch: 'feat/seller-badges',
@@ -432,8 +504,11 @@ export function sampleState(now = Date.now()): State {
         at: ago(4 * MIN),
       },
       { kind: 'ci_failed', title: 'CI failed on main', detail: 'test-core: tests/search/test_ranking.py', url: `${GH}/actions/runs/9001`, at: ago(19 * MIN) },
+      { kind: 'session_uncommitted', title: 'Seller payouts export', detail: '10 uncommitted files in worktree-1.5.0-seller-payouts', sessionId: id('Seller payouts export'), at: ago(52 * MIN) },
       { kind: 'pr_changes_requested', title: '#208 Shorter onboarding copy', detail: 'Changes requested on the second screen', url: `${GH}/pull/208`, at: ago(5 * HOUR) },
     ],
+    // Three hours ago: #205 had not merged yet and #212's checks were still running.
+    caughtUp: { at: ago(3 * HOUR), prs: { 205: 'success', 206: 'merged', 208: 'success', 210: 'success', 212: 'pending', 214: 'pending' } },
     sessions: byId,
     projects: [
       { key: HARBOR, name: 'harbor', isWorkspace: true, sessionIds: idsOf(HARBOR) },
@@ -448,7 +523,7 @@ export function sampleState(now = Date.now()): State {
       items,
       ciRuns: [
         { id: 9003, title: 'Search ranking uses the new tokenizer', workflow: 'Deploy staging', branch: 'main', status: 'queued', url: `${GH}/actions/runs/9003`, startedAt: ago(MIN) },
-        { id: 9002, title: 'Checkout: order summary stays visible on small screens', workflow: 'CI', branch: 'feat/checkout-redesign', status: 'in_progress', url: `${GH}/actions/runs/9002`, startedAt: ago(3 * MIN) },
+        { id: 9002, title: 'Checkout: order summary stays visible on small screens', workflow: 'CI', branch: 'feat/checkout-redesign', status: 'in_progress', url: `${GH}/actions/runs/9002`, startedAt: ago(3 * MIN), jobs: [{ name: 'changes', status: 'success', durationMs: 9_000 }, { name: 'core', status: 'in_progress', startedAt: ago(2 * MIN) }, { name: 'app', status: 'skipped' }, { name: 'edge', status: 'success', durationMs: 41_000 }, { name: 'infra', status: 'queued' }] },
         { id: 9001, title: 'Search ranking uses the new tokenizer', workflow: 'CI', branch: 'main', status: 'failure', url: `${GH}/actions/runs/9001`, startedAt: ago(25 * MIN), durationMs: 6 * MIN + 12_000 },
         { id: 9004, title: 'Digest: one e-mail per seller per day', workflow: 'CI', branch: 'feat/push-digest', status: 'failure', url: `${GH}/actions/runs/9004`, startedAt: ago(70 * MIN), durationMs: 2 * MIN + 41_000 },
         { id: 9005, title: 'Badges: show the level on the profile header', workflow: 'CI', branch: 'feat/seller-badges', status: 'success', url: `${GH}/actions/runs/9005`, startedAt: ago(125 * MIN), durationMs: 5 * MIN + 40_000 },
@@ -487,5 +562,6 @@ export function sampleState(now = Date.now()): State {
       ],
     },
     activity,
+    settings: defaultSettings,
   };
 }

@@ -7,10 +7,12 @@
 import { type FSWatcher, watch } from 'node:fs';
 import { basename, join } from 'node:path';
 import * as vscode from 'vscode';
+import { parseMark } from './catchup';
 import { compose, type GithubResult } from './compose';
 import { runGit, projectRootOf } from './data/git';
 import { parseRoadmap } from './data/roadmap';
-import type { ClaudeSession, State } from './model';
+import type { CatchUpMark, ClaudeSession, Settings, State } from './model';
+import { isProjectSetting, readSettings } from './settings';
 import { ancestorsOf, readProcessTable } from './procs';
 import { type GitSnapshot, loadClaude, loadGit, loadGithub } from './sources';
 
@@ -20,6 +22,8 @@ const CLAUDE_TIMER_VISIBLE_MS = 15_000;
 const CLAUDE_TIMER_HIDDEN_MS = 60_000;
 const GIT_TIMER_MS = 15_000;
 const MIN_GITHUB_SECONDS = 15;
+/** Where the workspace state keeps when the person last caught up. */
+const CAUGHT_UP_KEY = 'cockpit.caughtUp';
 
 /** Runs `load` with no overlap: a request while it runs schedules exactly one more run after it. */
 class Source<T> {
@@ -78,6 +82,8 @@ export interface StoreOptions {
   workspace?: { name: string; path: string };
   claudeDir: string;
   log: (line: string) => void;
+  /** This workspace's memory (ExtensionContext.workspaceState): the Catch up mark lives there. */
+  memory: vscode.Memento;
 }
 
 export class Store implements vscode.Disposable {
@@ -137,7 +143,10 @@ export class Store implements vscode.Disposable {
         this.githubRoot = root;
         return next;
       },
-      changed,
+      () => {
+        this.scheduleGithub(); // poll faster while a run is going
+        changed();
+      },
       opts.log,
     );
 
@@ -150,6 +159,8 @@ export class Store implements vscode.Disposable {
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('cockpit.endedSessionDays')) void this.claude.run();
         if (e.affectsConfiguration('cockpit.githubPollSeconds')) this.scheduleGithub();
+        // The page shows the settings too (the settings popover, hidden sections).
+        if (e.affectsConfiguration('cockpit')) this.emit();
       }),
     );
     this.scheduleClaude();
@@ -186,6 +197,12 @@ export class Store implements vscode.Disposable {
     const snapshot = this.git.value;
     if (!snapshot) return;
     this.git.value = { ...snapshot, releases: { ...snapshot.releases, available: true, roadmapExists: true, roadmap: parseRoadmap(text) } };
+    this.emit();
+  }
+
+  /** The person caught up: Catch up shows what changes after `mark`. */
+  async setCaughtUp(mark: CatchUpMark): Promise<void> {
+    await this.opts.memory.update(CAUGHT_UP_KEY, mark);
     this.emit();
   }
 
@@ -256,6 +273,8 @@ export class Store implements vscode.Disposable {
       github: this.github.value,
       releases: git?.releases,
       commits: git?.commits,
+      settings: readCockpitSettings(),
+      caughtUp: parseMark(this.opts.memory.get(CAUGHT_UP_KEY)),
     });
     this.emitter.fire(this.current);
   }
@@ -345,7 +364,9 @@ export class Store implements vscode.Disposable {
 
   private scheduleGithub(): void {
     clearInterval(this.githubTimer);
-    this.githubTimer = this.visible ? setInterval(() => void this.github.run(), this.githubPollMs()) : undefined;
+    const running = this.github.value?.ciRuns.some((r) => r.status === 'in_progress' || r.status === 'queued');
+    const ms = running ? MIN_GITHUB_SECONDS * 1000 : this.githubPollMs();
+    this.githubTimer = this.visible ? setInterval(() => void this.github.run(), ms) : undefined;
   }
 
   dispose(): void {
@@ -358,4 +379,11 @@ export class Store implements vscode.Disposable {
     for (const d of this.disposables) d.dispose();
     this.emitter.dispose();
   }
+}
+
+/** Cockpit's settings: a project setting only as the workspace holds it (a value in the user's settings is for no
+ *  project in particular, so it is not one), the others as VS Code merges them. */
+function readCockpitSettings(): Settings {
+  const config = vscode.workspace.getConfiguration('cockpit');
+  return readSettings((key) => (isProjectSetting(key) ? config.inspect(key)?.workspaceValue : config.get(key)));
 }

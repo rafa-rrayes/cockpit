@@ -218,6 +218,25 @@ describe('transcripts', () => {
     expect(third?.title).toBe('Staging and production migration');
   });
 
+  it("reads the session's last answer as its report, skipping tool calls, subagents and API errors", async () => {
+    const path = transcript('-work-demo', ID.waiting);
+    const assistant = (content: unknown[], extra: Record<string, unknown> = {}) =>
+      `${JSON.stringify({ type: 'assistant', isSidechain: false, message: { role: 'assistant', model: 'claude-x', content }, sessionId: ID.waiting, ...extra })}\n`;
+    appendFileSync(
+      path,
+      assistant([{ type: 'text', text: 'An early note' }]) +
+        assistant([{ type: 'text', text: '## Report\n\nDone.' }, { type: 'text', text: 'Still open:\n- a token' }]) +
+        assistant([{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'echo "type":"text"' } }]) +
+        assistant([{ type: 'text', text: 'From a subagent' }], { isSidechain: true }) +
+        assistant([{ type: 'text', text: 'API Error: overloaded' }], { isApiErrorMessage: true }),
+    );
+    expect((await read())[ID.waiting]?.report).toBe('## Report\n\nDone.\n\nStill open:\n- a token');
+    // A newer answer, appended, replaces it.
+    appendFileSync(path, assistant([{ type: 'text', text: 'Newer answer' }]));
+    expect((await read())[ID.waiting]?.report).toBe('Newer answer');
+    expect((await read())[ID.busy]?.report).toBe('Working on it.');
+  });
+
   it('caches a transcript by size and modification time', async () => {
     const path = transcript('-work-demo', ID.waiting);
     await read();

@@ -1,8 +1,10 @@
 // The one place that talks to the extension host. Inside VS Code it wraps acquireVsCodeApi(); in a plain browser
 // (dev.html) it plays the host itself: actions go to an on-screen log and State comes from
 // window.__COCKPIT_DEV_STATE__, so the UI runs unchanged in both.
+import { markOf } from '../src/catchup';
 import { applyRoadmapEdit, parseRoadmap, starterRoadmap } from '../src/data/roadmap';
 import type { HostMessage, RoadmapEdit, State, WebviewMessage } from '../src/model';
+import { type SettingEdit, readSettings, storedValue } from '../src/settings';
 
 interface VsCodeApi {
   postMessage(message: unknown): void;
@@ -47,6 +49,8 @@ function createHost(): Host {
   const logListeners = new Set<(entries: DevLogEntry[]) => void>();
   let log: DevLogEntry[] = [];
   let devUiState: unknown;
+  /** Dev only: the settings the preview has written, as settings.json would hold them. */
+  const devConfig: Record<string, unknown> = {};
 
   window.addEventListener('message', (event: MessageEvent<unknown>) => {
     if (!isHostMessage(event.data)) return;
@@ -77,6 +81,16 @@ function createHost(): Host {
     window.__COCKPIT_DEV_STATE__ = { ...state, releases: { ...state.releases, available: true, roadmapExists: true, roadmap: parseRoadmap(text) } };
   };
 
+  // Dev only: writes a setting the way the real host does, and reads them all back.
+  const devSetting = (edit: SettingEdit): void => {
+    const state = window.__COCKPIT_DEV_STATE__;
+    if (!state) return;
+    const value = storedValue(edit);
+    if (value === undefined) delete devConfig[edit.key];
+    else devConfig[edit.key] = value;
+    window.__COCKPIT_DEV_STATE__ = { ...state, settings: readSettings((key) => devConfig[key]) };
+  };
+
   return {
     isDev: api === undefined,
     post(message) {
@@ -87,7 +101,10 @@ function createHost(): Host {
       log = [...log.slice(-7), { at: Date.now(), message }];
       for (const listener of logListeners) listener(log);
       if (message.type === 'roadmap') devRoadmap(message.edit);
-      if (message.type === 'ready' || message.type === 'refresh' || message.type === 'roadmap') devAnswer();
+      if (message.type === 'setSetting') devSetting(message.edit);
+      const state = window.__COCKPIT_DEV_STATE__;
+      if (message.type === 'caughtUp' && state) window.__COCKPIT_DEV_STATE__ = { ...state, caughtUp: markOf(state, Date.now()) };
+      if (['ready', 'refresh', 'roadmap', 'setSetting', 'caughtUp'].includes(message.type)) devAnswer();
     },
     onState(listener) {
       stateListeners.add(listener);

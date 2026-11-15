@@ -1,6 +1,7 @@
 // Browser preview: provides the State the extension host would send, then starts the real webview bundle.
 // dev.html?state=<url> previews a State JSON captured elsewhere; dev.html?theme=light switches the theme.
 import type { State } from '../src/model';
+import { defaultSettings } from '../src/settings';
 import { sampleRoadmap, sampleState } from './sample-state';
 
 async function loadState(): Promise<State> {
@@ -11,7 +12,9 @@ async function loadState(): Promise<State> {
   }
   const response = await fetch(url);
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-  return (await response.json()) as State;
+  // A State captured before settings were part of it.
+  const state = (await response.json()) as State;
+  return { ...state, settings: state.settings ?? defaultSettings };
 }
 
 function start(state: State): void {

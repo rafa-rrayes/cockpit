@@ -1,5 +1,6 @@
 // Every Claude session on the machine, grouped by project: the workspace's project first and open, the others
-// folded under their names with a count and their status dots.
+// folded under their names with a count and their status dots. With "Show all active projects" off (the
+// cockpit.claudes.showAllProjects setting), only the workspace project's sessions, as cards with no group head.
 import type { JSX } from 'preact';
 import type { ClaudeSession, Project, SessionStatus } from '../../src/model';
 import { type SessionFilter, useCockpit } from '../context';
@@ -118,21 +119,20 @@ function ProjectGroup({ project, sessions, defaultOpen }: { project: Project; se
 }
 
 export function Claudes(): JSX.Element {
-  const { state, ui, update } = useCockpit();
-  const all = Object.values(state.sessions);
+  const { state, ui, update, post } = useCockpit();
+  const workspaceProject = state.projects.find((p) => p.isWorkspace);
+  // Off only means something in a window with a project: an empty window shows every project.
+  const onlyHere = !state.settings.showAllProjects && state.workspace !== undefined;
+  const all = onlyHere
+    ? (workspaceProject?.sessionIds ?? []).map((id) => state.sessions[id]).filter((s): s is ClaudeSession => s !== undefined)
+    : Object.values(state.sessions);
   const live = all.filter((s) => s.live).length;
   const waiting = all.filter((s) => s.status === 'waiting').length;
   const ended = all.length - live;
-  const hasWorkspaceProject = state.projects.some((p) => p.isWorkspace);
+  const shown = (p: Project): ClaudeSession[] =>
+    p.sessionIds.map((id) => state.sessions[id]).filter((s): s is ClaudeSession => s !== undefined && matches(s, ui.filter, ui.showEnded));
 
-  const groups = state.projects
-    .map((p) => ({
-      project: p,
-      sessions: p.sessionIds
-        .map((id) => state.sessions[id])
-        .filter((s): s is ClaudeSession => s !== undefined && matches(s, ui.filter, ui.showEnded)),
-    }))
-    .filter((g) => g.project.isWorkspace || g.sessions.length > 0);
+  const groups = state.projects.map((p) => ({ project: p, sessions: shown(p) })).filter((g) => g.project.isWorkspace || g.sessions.length > 0);
 
   const filters: { id: SessionFilter; label: string; n: number }[] = [
     { id: 'all', label: 'All', n: ui.showEnded ? all.length : live },
@@ -140,8 +140,45 @@ export function Claudes(): JSX.Element {
     { id: 'waiting', label: 'Waiting', n: waiting },
   ];
 
-  const emptyHere =
-    ui.filter === 'waiting' ? 'No Claude here is waiting for you.' : 'No Claude is running here.';
+  const emptyHere = ui.filter === 'waiting' ? 'No Claude here is waiting for you.' : 'No Claude is running here.';
+
+  let body: JSX.Element | JSX.Element[];
+  if (onlyHere) {
+    const here = workspaceProject ? shown(workspaceProject) : [];
+    body = here.length ? (
+      <div class="cards">
+        {here.map((s) => (
+          <SessionCard key={s.sessionId} session={s} />
+        ))}
+      </div>
+    ) : (
+      <Empty>{emptyHere}</Empty>
+    );
+  } else {
+    const hasWorkspaceProject = workspaceProject !== undefined;
+    body = [
+      ...(!hasWorkspaceProject && state.workspace ? [<Empty key="empty-here">{emptyHere}</Empty>] : []),
+      ...(groups.length === 0 && !state.workspace ? [<Empty key="empty">No Claude session on this machine yet.</Empty>] : []),
+      ...groups.map(({ project, sessions }) =>
+        project.isWorkspace && sessions.length === 0 ? (
+          <div class="group group-open" key={project.key}>
+            <h3 class="group-head group-head-static">
+              <span class="group-name">{project.name}</span>
+              <span class="tag">this window</span>
+            </h3>
+            <Empty>{emptyHere}</Empty>
+          </div>
+        ) : (
+          <ProjectGroup
+            key={project.key}
+            project={project}
+            sessions={sessions}
+            defaultOpen={project.isWorkspace || (!hasWorkspaceProject && sessions.some((s) => s.live))}
+          />
+        ),
+      ),
+    ];
+  }
 
   return (
     <Section
@@ -166,29 +203,20 @@ export function Claudes(): JSX.Element {
             />
             Show ended <span class="count">{ended}</span>
           </label>
+          {state.workspace && (
+            <label class="check" title="Off: only the Claudes of this window's project">
+              <input
+                type="checkbox"
+                checked={state.settings.showAllProjects}
+                onChange={(e) => post({ type: 'setSetting', edit: { key: 'claudes.showAllProjects', value: e.currentTarget.checked } })}
+              />
+              Show all active projects
+            </label>
+          )}
         </>
       }
     >
-      {!hasWorkspaceProject && state.workspace && <Empty>{emptyHere}</Empty>}
-      {groups.length === 0 && !state.workspace && <Empty>No Claude session on this machine yet.</Empty>}
-      {groups.map(({ project, sessions }) =>
-        project.isWorkspace && sessions.length === 0 ? (
-          <div class="group group-open" key={project.key}>
-            <h3 class="group-head group-head-static">
-              <span class="group-name">{project.name}</span>
-              <span class="tag">this window</span>
-            </h3>
-            <Empty>{emptyHere}</Empty>
-          </div>
-        ) : (
-          <ProjectGroup
-            key={project.key}
-            project={project}
-            sessions={sessions}
-            defaultOpen={project.isWorkspace || (!hasWorkspaceProject && sessions.some((s) => s.live))}
-          />
-        ),
-      )}
+      {body}
     </Section>
   );
 }

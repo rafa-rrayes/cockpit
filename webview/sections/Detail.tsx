@@ -2,10 +2,12 @@
 // It is modal: the page behind is inert, Esc or the backdrop closes it, and focus goes back where it came from.
 import type { JSX } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';
+import { laneOf } from '../../src/catchup';
 import type { ClaudeSession, Subagent, WorkflowPhase, WorkflowRun } from '../../src/model';
 import { useCockpit } from '../context';
 import { duration, fullDate, plural } from '../format';
 import { Icon } from '../icons';
+import { Report } from '../Report';
 import { Ago, Chip, Empty, StatusDot, statusText } from '../ui';
 
 const workflowTone = { running: 'info', completed: 'ok', failed: 'fail', unknown: 'muted' } as const;
@@ -175,6 +177,13 @@ export function Detail({ session: s, onClose }: { session: ClaudeSession; onClos
               <Empty>No prompt recorded yet.</Empty>
             )}
           </section>
+
+          {s.report && (
+            <section aria-labelledby="detail-report">
+              <h3 id="detail-report">Last answer</h3>
+              <Report text={s.report} lane={laneOf(state, state.work.items.find((i) => i.sessionIds.includes(s.sessionId))?.branch)} />
+            </section>
+          )}
 
           {s.workflows.length > 0 && (
             <section aria-labelledby="detail-workflows">

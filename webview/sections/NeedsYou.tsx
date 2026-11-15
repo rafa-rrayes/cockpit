@@ -7,6 +7,7 @@ import { Ago, Section } from '../ui';
 
 const kinds: Record<AttentionKind, { icon: IconName; word: string; action: string }> = {
   session_waiting: { icon: 'person', word: 'Claude is waiting', action: 'Open' },
+  session_uncommitted: { icon: 'file', word: 'Stopped with uncommitted changes', action: 'Open' },
   ci_failed: { icon: 'x', word: 'CI failed', action: 'Open run' },
   pr_changes_requested: { icon: 'pr', word: 'Changes requested', action: 'Open PR' },
 };
@@ -43,7 +44,7 @@ export function NeedsYou(): JSX.Element | null {
             </>
           );
           return (
-            <li key={`${a.kind}:${a.sessionId ?? a.url ?? i}`} class={a.kind === 'session_waiting' ? undefined : 'needs-fail'}>
+            <li key={`${a.kind}:${a.sessionId ?? a.url ?? i}`} class={a.kind === 'session_waiting' || a.kind === 'session_uncommitted' ? undefined : 'needs-fail'}>
               {actionable ? (
                 <button type="button" class="needs-item" onClick={() => act(a)}>
                   {body}

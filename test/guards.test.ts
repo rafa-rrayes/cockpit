@@ -41,10 +41,45 @@ describe('parseMessage', () => {
   it('accepts the contract messages and nothing else', () => {
     expect(parseMessage({ type: 'ready' })).toEqual({ type: 'ready' });
     expect(parseMessage({ type: 'cleanMerged', extra: 1 })).toEqual({ type: 'cleanMerged' });
+    expect(parseMessage({ type: 'toggleMaximize' })).toEqual({ type: 'toggleMaximize' });
     expect(parseMessage({ type: 'resumeSession', sessionId: 'abc' })).toEqual({ type: 'resumeSession', sessionId: 'abc' });
     expect(parseMessage({ type: 'openFolder', path: '/x', newWindow: 'yes' })).toEqual({ type: 'openFolder', path: '/x', newWindow: false });
     expect(parseMessage({ type: 'copy', text: '' })).toEqual({ type: 'copy', text: '' });
     for (const bad of [null, 'ready', [], { type: 'runShell', cmd: 'ls' }, { type: 'resumeSession' }, { type: 'resumeSession', sessionId: 5 }, { type: 'openUrl' }]) {
+      expect(parseMessage(bad)).toBeUndefined();
+    }
+  });
+
+  it('takes Catch up, Ship, Release, Tag and Pull with a branch or a version that cannot be an option', () => {
+    expect(parseMessage({ type: 'caughtUp', at: 5 })).toEqual({ type: 'caughtUp' });
+    expect(parseMessage({ type: 'pullDefault' })).toEqual({ type: 'pullDefault' });
+    expect(parseMessage({ type: 'ship', branch: 'worktree-0.2.0-card' })).toEqual({ type: 'ship', branch: 'worktree-0.2.0-card' });
+    expect(parseMessage({ type: 'release', version: '0.2.0' })).toEqual({ type: 'release', version: '0.2.0' });
+    expect(parseMessage({ type: 'tag', version: '1.0.0-rc.1' })).toEqual({ type: 'tag', version: '1.0.0-rc.1' });
+    for (const bad of [
+      { type: 'ship' },
+      { type: 'ship', branch: '--force' },
+      { type: 'ship', branch: 'a..b' },
+      { type: 'ship', branch: 'a b' },
+      { type: 'release', version: 'Backlog' },
+      { type: 'tag', version: '1.0' },
+      { type: 'tag', version: '-1.0.0' },
+    ]) {
+      expect(parseMessage(bad)).toBeUndefined();
+    }
+  });
+
+  it('takes startClaude with card ids and checked options', () => {
+    const options = { model: 'sonnet', effort: 'max', subagents: 2, worktree: true, markDoing: true };
+    expect(parseMessage({ type: 'startClaude', ids: ['3:ab', '5:cd', '3:ab'], options })).toEqual({ type: 'startClaude', ids: ['3:ab', '5:cd'], options });
+    for (const bad of [
+      { type: 'startClaude', ids: [], options },
+      { type: 'startClaude', ids: '3:ab', options },
+      { type: 'startClaude', ids: ['3:ab', 7], options },
+      { type: 'startClaude', ids: Array.from({ length: 21 }, (_, i) => `${i}:x`), options },
+      { type: 'startClaude', ids: ['3:ab'], options: { ...options, model: '--dangerously-skip-permissions' } },
+      { type: 'startClaude', ids: ['3:ab'] },
+    ]) {
       expect(parseMessage(bad)).toBeUndefined();
     }
   });

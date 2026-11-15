@@ -2,7 +2,11 @@
 // and what "Clean merged" may remove.
 import { isAbsolute } from 'node:path';
 import { isRunningAgentWorktree, runningAgentWorktrees } from './compose';
+import { isLinkBranch } from './data/roadmap';
+import { MAX_BATCH, parseLaunchOptions } from './launch';
 import type { ItemStatus, RoadmapEdit, State, WebviewMessage, WorkItem } from './model';
+import { isReleaseVersion } from './publish';
+import { parseSettingEdit } from './settings';
 
 // Claude Code session ids are UUIDs; anything else never reaches a shell command line.
 const SESSION_ID = /^[0-9A-Za-z][0-9A-Za-z-]{7,63}$/;
@@ -19,12 +23,37 @@ export function parseMessage(raw: unknown): WebviewMessage | undefined {
   switch (raw.type) {
     case 'ready':
     case 'refresh':
+    case 'toggleMaximize':
     case 'cleanMerged':
     case 'openRoadmap':
+    case 'openSettings':
+    case 'caughtUp':
+    case 'pullDefault':
       return { type: raw.type };
+    case 'ship': {
+      // What git accepts as a branch name and cannot be read as an option; the host also checks it is one it shows.
+      const branch = field(raw.branch);
+      return branch !== undefined && isLinkBranch(branch) ? { type: 'ship', branch } : undefined;
+    }
+    case 'release':
+    case 'tag': {
+      const version = field(raw.version);
+      return version !== undefined && isReleaseVersion(version) ? { type: raw.type, version } : undefined;
+    }
+    case 'setSetting': {
+      const edit = parseSettingEdit(raw.edit);
+      return edit ? { type: 'setSetting', edit } : undefined;
+    }
     case 'roadmap': {
       const edit = parseRoadmapEdit(raw.edit);
       return edit ? { type: 'roadmap', edit } : undefined;
+    }
+    case 'startClaude': {
+      const ids = Array.isArray(raw.ids) ? raw.ids.map(field) : [];
+      const options = parseLaunchOptions(raw.options);
+      if (ids.length === 0 || ids.length > MAX_BATCH || !options) return undefined;
+      if (!ids.every((id): id is string => id !== undefined)) return undefined;
+      return { type: 'startClaude', ids: [...new Set(ids)], options };
     }
     case 'resumeSession':
     case 'focusSession':

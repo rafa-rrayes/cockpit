@@ -30,8 +30,35 @@
         "title": "Refresh",
         "category": "Cockpit",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "cockpit.maximize",
+        "title": "Maximize",
+        "category": "Cockpit",
+        "icon": "$(screen-full)"
       }
     ],
+    "keybindings": [
+      {
+        "command": "cockpit.maximize",
+        "key": "ctrl+alt+m",
+        "mac": "ctrl+cmd+m",
+        "when": "!inZenMode"
+      },
+      {
+        "command": "workbench.action.exitZenMode",
+        "key": "ctrl+alt+m",
+        "mac": "ctrl+cmd+m",
+        "when": "inZenMode"
+      }
+    ],
+    "configurationDefaults": {
+      "zenMode.fullScreen": false,
+      "zenMode.centerLayout": false,
+      "zenMode.hideStatusBar": false,
+      "zenMode.hideActivityBar": false,
+      "zenMode.silentNotifications": false
+    },
     "viewsContainers": {
       "activitybar": [
         {
@@ -56,6 +83,12 @@
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "cockpit.maximize",
+          "when": "!inZenMode"
+        }
+      ],
       "view/title": [
         {
           "command": "cockpit.refresh",
@@ -72,6 +105,11 @@
           "default": true,
           "markdownDescription": "Open Cockpit as the first, pinned tab when a window starts. Files you had open stay open beside it. Pair it with `#workbench.startupEditor#`: `none` so the Welcome page does not open too."
         },
+        "cockpit.claudes.showAllProjects": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the Claudes of every project in the Claudes section. Off: only the Claudes of this window's project."
+        },
         "cockpit.endedSessionDays": {
           "type": "number",
           "default": 7,
@@ -84,6 +122,70 @@
           "default": 60,
           "minimum": 15,
           "description": "How often to ask GitHub (through gh) for pull requests and CI runs while Cockpit is visible. Nothing is asked while it is hidden."
+        },
+        "cockpit.hiddenSections": {
+          "type": "array",
+          "default": [],
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["needs", "claudes", "roadmap", "work", "releases", "activity"]
+          },
+          "description": "Sections of the Cockpit page to leave out."
+        },
+        "cockpit.launch.model": {
+          "type": "string",
+          "default": "default",
+          "enum": ["default", "fable", "opus", "sonnet", "haiku"],
+          "enumDescriptions": ["Claude Code's own default model", "", "", "", ""],
+          "description": "The model \"Start Claude…\" on roadmap cards opens with."
+        },
+        "cockpit.launch.effort": {
+          "type": "string",
+          "default": "high",
+          "enum": ["low", "medium", "high", "xhigh", "max"],
+          "description": "How much the Claude thinks (claude --effort): what \"Start Claude…\" opens with."
+        },
+        "cockpit.launch.subagents": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 8,
+          "description": "Up to how many subagents the Claude may run in parallel: what \"Start Claude…\" opens with. 0: it works alone."
+        },
+        "cockpit.launch.subagentModel": {
+          "type": "string",
+          "default": "auto",
+          "enum": ["auto", "fable", "opus", "sonnet", "haiku"],
+          "enumDescriptions": ["Claude Code picks", "", "", "", ""],
+          "description": "The model every subagent runs on, when there are subagents: what \"Start Claude…\" opens with."
+        },
+        "cockpit.launch.worktree": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the Claude in a git worktree of its own: what \"Start Claude…\" opens with."
+        },
+        "cockpit.launch.markDoing": {
+          "type": "boolean",
+          "default": true,
+          "description": "Move planned cards to \"In progress\" once the Claude starts: what \"Start Claude…\" opens with."
+        },
+        "cockpit.promptSteps": {
+          "type": "array",
+          "default": [],
+          "maxItems": 30,
+          "items": { "type": "string", "maxLength": 1000 },
+          "scope": "resource",
+          "markdownDescription": "**Per project**: read from the workspace's settings only, never the user's. The steps of the prompt a Claude started from the roadmap works by, one per item. Empty: Cockpit's standard steps. The steps that follow from the launcher's options (worktree or main checkout, committing, subagents) are added to them."
+        },
+        "cockpit.release.versionFiles": {
+          "type": "array",
+          "default": [],
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./ -]*$", "maxLength": 200 },
+          "scope": "resource",
+          "markdownDescription": "**Per project**: read from the workspace's settings only, never the user's. Files whose version **Release…** bumps, besides the root `package.json`, as paths from the repository root (for example `pyproject.toml`, `Cargo.toml`). In each, the first `\"version\"` key (JSON) or the first standalone current version is replaced."
         }
       }
     }

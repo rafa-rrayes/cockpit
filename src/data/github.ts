@@ -1,7 +1,7 @@
 // GitHub adapter: pull requests and CI runs through the gh CLI, on the person's existing login.
 // gh missing, logged out, no GitHub remote or offline: never throws; the lists it could not read are left out,
 // with a short githubNote (the store then keeps the last lists it had).
-import type { CheckSummary, CiRun, PullRequest } from '../model';
+import type { CheckSummary, CiJob, CiRun, PullRequest } from '../model';
 import { run, type RunResult } from './git';
 
 const PR_FIELDS = 'number,title,url,headRefName,isDraft,state,reviewDecision,statusCheckRollup,updatedAt';
@@ -12,7 +12,9 @@ const RUN_LIMIT = 10;
 // No prompts, no update banners, no colour codes in what we parse.
 const GH_ENV = { GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', NO_COLOR: '1', GH_SPINNER_DISABLED: '1', GIT_TERMINAL_PROMPT: '0' };
 
-const gh = (repoRoot: string, args: string[]) => run('gh', args, { cwd: repoRoot, timeoutMs: 20000, env: GH_ENV });
+/** gh in `cwd`, without a shell, prompts or colours. Shared with ship.ts, which publishes through it. */
+export const runGh = (cwd: string, args: string[], timeoutMs = 20000) => run('gh', args, { cwd, timeoutMs, env: GH_ENV });
+const gh = runGh;
 
 // ───────────────────────────── Pure parsers ─────────────────────────────
 
@@ -144,6 +146,33 @@ export function parseRuns(json: string): CiRun[] {
   return out.slice(0, RUN_LIMIT);
 }
 
+/** Parses `gh run view <id> --json jobs`: the jobs in the order GitHub lists them. */
+export function parseJobs(json: string): CiJob[] {
+  let list: unknown;
+  try {
+    const v: unknown = JSON.parse(json);
+    list = isObj(v) ? v.jobs : undefined;
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(list)) return [];
+  const out: CiJob[] = [];
+  for (const j of list) {
+    const name = isObj(j) ? str(j.name) : undefined;
+    if (!isObj(j) || !name) continue;
+    const skipped = String(j.conclusion).toLowerCase() === 'skipped';
+    const job: CiJob = { name, status: skipped ? 'skipped' : runStatus(str(j.status), str(j.conclusion)) };
+    const url = str(j.url);
+    if (url) job.url = url;
+    const startedAt = time(j.startedAt);
+    const completedAt = time(j.completedAt);
+    if (startedAt) job.startedAt = startedAt;
+    if (startedAt && completedAt && completedAt >= startedAt) job.durationMs = completedAt - startedAt;
+    out.push(job);
+  }
+  return out;
+}
+
 /** A few words on why gh gave nothing. */
 export function ghNote(r: Pick<RunResult, 'stderr' | 'code' | 'timedOut'>): string {
   const err = r.stderr;
@@ -191,7 +220,18 @@ export async function readGithub(repoRoot: string): Promise<GithubRead> {
   const out: GithubRead = {};
   if (github) out.github = github;
   if (prs.ok) out.prs = parsePullRequests(prs.stdout);
-  if (runs.ok) out.ciRuns = parseRuns(runs.stdout);
+  if (runs.ok) {
+    out.ciRuns = parseRuns(runs.stdout);
+    // The jobs of the runs going on now, so the page can show where each one is.
+    await Promise.all(
+      out.ciRuns
+        .filter((r) => r.status === 'in_progress' || r.status === 'queued')
+        .map(async (r) => {
+          const view = await gh(repoRoot, ['run', 'view', String(r.id), '--json', 'jobs']);
+          if (view.ok) r.jobs = parseJobs(view.stdout);
+        }),
+    );
+  }
   if (failed) out.githubNote = ghNote(failed);
   return out;
 }

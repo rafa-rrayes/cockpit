@@ -46,6 +46,8 @@ const CHUNK_BYTES = 1024 * 1024;
 const START_SLACK_MS = 30_000;
 const MAX_PROMPTS = 5;
 const PROMPT_CHARS = 300;
+/** The last answer is kept up to this long: a report, not a transcript. */
+export const REPORT_CHARS = 20_000;
 const HEAD_BYTES = 64 * 1024;
 /** How far back from the end a transcript is read, chunk by chunk, until 5 prompts are found. Claude Code keeps
  *  re-appending its title and last-prompt records, so the newest ones always sit in the first chunk (measured: at
@@ -223,6 +225,8 @@ interface TranscriptInfo {
   lastPrompt?: string;
   /** Newest first. */
   prompts: string[];
+  /** The text of the newest assistant message that has text. */
+  report?: string;
   cwd?: string;
   gitBranch?: string;
   version?: string;
@@ -280,8 +284,23 @@ function promptOf(rec: Json): string | undefined {
   return text ? cleanPrompt(text, origin !== undefined) : undefined;
 }
 
+/** The text of an assistant message of the session itself (not a subagent's, not an API error Claude Code writes in
+ *  the model's place), or undefined. */
+function reportOf(rec: Json): string | undefined {
+  if (rec.type !== 'assistant' || rec.isSidechain === true || rec.isApiErrorMessage === true) return undefined;
+  const message = rec.message;
+  if (!isObj(message) || message.model === '<synthetic>' || !Array.isArray(message.content)) return undefined;
+  const text = message.content
+    .filter((c): c is Json => isObj(c) && c.type === 'text' && typeof c.text === 'string')
+    .map((c) => (c.text as string).trim())
+    .filter(Boolean)
+    .join('\n\n');
+  return text ? cut(text, REPORT_CHARS) : undefined;
+}
+
 /** Folds one transcript line into `acc`. Lines arrive newest first, so the first value seen for a field wins.
- *  Only lines that can matter are parsed: most of a transcript is tool output. */
+ *  Only lines that can matter are parsed: most of a transcript is tool output. `wantPrompts`: the line belongs to
+ *  the unbroken tail, so prompts and the report it holds are the newest ones. */
 function takeLine(line: string, acc: TranscriptInfo, wantPrompts: boolean): void {
   if (line.length === 0) return;
   const metaType = /^\{"type":"([a-z-]+)"/.exec(line)?.[1];
@@ -300,9 +319,11 @@ function takeLine(line: string, acc: TranscriptInfo, wantPrompts: boolean): void
     wantPrompts &&
     acc.prompts.length < MAX_PROMPTS &&
     (line.includes(HUMAN_MARK) || (!line.includes('"origin":') && line.includes('"type":"user"') && !line.includes('"tool_use_id"')));
-  if (!wantRecord && !promptCandidate) return;
+  const reportCandidate = wantPrompts && acc.report === undefined && line.includes('"role":"assistant"') && line.includes('"type":"text"');
+  if (!wantRecord && !promptCandidate && !reportCandidate) return;
   const rec = parseJson(line);
   if (!isObj(rec)) return;
+  if (reportCandidate) acc.report = reportOf(rec);
   if (wantRecord && str(rec.cwd)) {
     acc.sawRecord = true;
     acc.cwd ??= str(rec.cwd);
@@ -414,6 +435,7 @@ function mergeInfo(newer: TranscriptInfo, older: TranscriptInfo): TranscriptInfo
     aiTitle: newer.aiTitle ?? older.aiTitle,
     agentName: newer.agentName ?? older.agentName,
     lastPrompt: newer.lastPrompt ?? older.lastPrompt,
+    report: newer.report ?? older.report,
     prompts: [...new Set([...newer.prompts, ...older.prompts])].slice(0, MAX_PROMPTS),
     cwd: newer.cwd ?? older.cwd,
     gitBranch: newer.sawRecord ? newer.gitBranch : older.gitBranch,
@@ -711,6 +733,7 @@ async function buildSession(gate: Gate, scanGate: Gate, id: string, live: LiveFi
     updatedAt: activity.length ? Math.floor(Math.max(...activity)) : undefined,
     claudeVersion: live?.version ?? info.version,
     transcriptPath: transcript?.path,
+    report: info.report,
     subagents,
     workflows,
   };

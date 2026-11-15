@@ -8,7 +8,10 @@
 //   - [ ] Comments                    to do (a plain "- Comments" too)
 //   - [~] Video feed                  in progress (also "[/]" and "[-]")
 //   - [x] Seasons                     done
-//   ## Backlog                        work not yet in a release (also "Later", "Unscheduled", "Someday", "Ideas")
+//   - [~] Feed <!-- cockpit:worktree-1.2.0-feed -->
+//                                     the branch working on the card, recorded by Start Claude, dropped once it merges;
+//                                     the comment is not part of the card's text and every edit keeps it
+//   ## Backlog                       work not yet in a release (also "Later", "Unscheduled", "Someday", "Ideas")
 //   Other headings ("## Notes", "## 1. Foundations": a version has a dot or a "v") end the lane above and are
 //   skipped with their items. Lines inside ``` or ~~~ code fences are skipped. "*" and "+" bullets, nested items
 //   and "### sub-headings" inside a lane are accepted (the sub-heading itself is skipped).
@@ -23,6 +26,17 @@ const BACKLOG_HEADING = /^(backlog|later|unscheduled|someday|ideas)$/i;
 const ITEM = /^(\s*)([-*+]|\d+[.)])(\s+)(?:\[([ xX~/-])\]\s*)?(.*)$/;
 const NEW_VERSION = /^\d+(?:\.\d+){1,2}(?:-[0-9A-Za-z.-]+)?$/;
 const MAX_TEXT = 300;
+/** The card's branch link at the end of its line. */
+const LINK = /\s*<!--\s*cockpit:([A-Za-z0-9._/-]+)\s*-->\s*$/;
+const ANY_LINK = /<!--\s*cockpit:[^>]*-->/g;
+/** What a branch name may be inside a link: what git allows, minus anything that could close the comment. */
+export const isLinkBranch = (b: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(b) && !b.includes('..') && b.length <= 200;
+
+/** A card's text and the branch its link names. */
+function splitLink(body: string): { text: string; branch?: string } {
+  const m = LINK.exec(body);
+  return m?.[1] ? { text: body.slice(0, m.index).trim(), branch: m[1] } : { text: body };
+}
 
 const boxOf: Record<ItemStatus, string> = { todo: ' ', doing: '~', done: 'x' };
 const statusOf = (box: string | undefined): ItemStatus => (box === undefined || box === ' ' ? 'todo' : box === 'x' || box === 'X' ? 'done' : 'doing');
@@ -91,11 +105,11 @@ function scan(text: string): Scan {
     if (!cur || /^#/.test(raw)) continue;
     const item = ITEM.exec(raw);
     if (item) {
-      const body = (item[5] ?? '').trim();
+      const { text: body, branch } = splitLink((item[5] ?? '').trim());
       if (!body) continue;
       const at = { line: i, hash: hash(raw) };
       cur.items.push(at);
-      cur.plan.items.push({ id: `${at.line}:${at.hash}`, text: body, status: statusOf(item[4]) });
+      cur.plan.items.push({ id: `${at.line}:${at.hash}`, text: body, status: statusOf(item[4]), ...(branch ? { branch } : {}) });
       continue;
     }
     const field = /^(target|status)\s*:\s*(.+)$/i.exec(unwrapLabel(raw.trim()));
@@ -119,8 +133,9 @@ export type EditResult = { ok: true; text: string } | { ok: false; error: string
 const STALE = 'ROADMAP.md changed since the board last read it. Try again.';
 const fail = (error: string): EditResult => ({ ok: false, error });
 
-/** One line, trimmed and bounded: a card is a single list item. */
-const clean = (text: string): string => text.replace(/\s+/g, ' ').trim().slice(0, MAX_TEXT);
+/** One line, trimmed and bounded: a card is a single list item. A link typed into the text is dropped: only Cockpit
+ *  writes links. */
+const clean = (text: string): string => text.replace(ANY_LINK, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_TEXT);
 
 const sameLane = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 
@@ -189,12 +204,21 @@ function laneOf(doc: Scan, name: string): { doc: Scan; lane: Lane } | undefined 
 
 const done = (doc: Scan, lines: string[]): EditResult => ({ ok: true, text: lines.join(doc.eol) });
 
-function rewrite(raw: string, change: { status?: ItemStatus; text?: string; indent?: string }): string {
+/** The item line with what `change` names changed and the rest as it was, the link included. `branch`: a branch
+ *  links the card to it, null drops the link. */
+function rewrite(raw: string, change: { status?: ItemStatus; text?: string; indent?: string; branch?: string | null }): string {
   const m = ITEM.exec(raw);
   if (!m) return raw;
   const indent = change.indent ?? m[1] ?? '';
   const box = change.status ? boxOf[change.status] : m[4];
-  return `${indent}${m[2]}${m[3]}${box === undefined ? '' : `[${box}] `}${change.text ?? m[5] ?? ''}`;
+  let rest = m[5] ?? '';
+  if (change.text !== undefined || change.branch !== undefined) {
+    const link = LINK.exec(rest);
+    const text = change.text ?? (link ? rest.slice(0, link.index) : rest);
+    const kept = link ? rest.slice(link.index) : '';
+    rest = change.branch === null ? text : change.branch !== undefined ? `${text} <!-- cockpit:${change.branch} -->` : `${text}${kept}`;
+  }
+  return `${indent}${m[2]}${m[3]}${box === undefined ? '' : `[${box}] `}${rest}`;
 }
 
 /** The text of ROADMAP.md after `edit`, or why it cannot be made. `create` is not an edit of a text: see
@@ -278,6 +302,56 @@ export function applyRoadmapEdit(text: string, edit: RoadmapEdit): EditResult {
       return done(doc, lines);
     }
   }
+}
+
+// ───────────────────────────── Branch links and shipping ─────────────────────────────
+// Not edits the webview can ask for: the host makes them when it starts a Claude, ships a branch, sees it merged
+// or prepares a release.
+
+/** Links the card to `branch` (replacing any link it had), moving it to `status` too when one is given. */
+export function linkCard(text: string, id: string, branch: string, status?: ItemStatus): EditResult {
+  if (!isLinkBranch(branch)) return fail(`"${branch}" cannot be written into ROADMAP.md.`);
+  const doc = scan(text);
+  const found = locate(doc, id);
+  if (!found) return fail(STALE);
+  const lines = doc.lines.slice();
+  lines[found.at.line] = rewrite(lines[found.at.line] ?? '', { branch, ...(status ? { status } : {}) });
+  return done(doc, lines);
+}
+
+/** The text with every card linked to `branch` done and unlinked: what ROADMAP.md reads once the branch merged.
+ *  The same text when no card is linked to it. */
+export function finishBranch(text: string, branch: string): string {
+  const doc = scan(text);
+  const lines = doc.lines.slice();
+  for (const lane of doc.lanes) {
+    for (const at of lane.items) {
+      const raw = lines[at.line] ?? '';
+      if (splitLink((ITEM.exec(raw)?.[5] ?? '').trim()).branch === branch) lines[at.line] = rewrite(raw, { status: 'done', branch: null });
+    }
+  }
+  return lines.join(doc.eol);
+}
+
+/** The release's "Status:" set to `value`: the line it has rewritten, or one added under its heading (after a
+ *  "Target:" line right there). */
+export function setLaneStatus(text: string, version: string, value: string): EditResult {
+  const doc = scan(text);
+  const lane = doc.lanes.find((l) => !l.plan.backlog && l.plan.version === version);
+  if (!lane) return fail(`ROADMAP.md has no "${version}" section any more.`);
+  const lines = doc.lines.slice();
+  const items = new Set(lane.items.map((i) => i.line));
+  for (let i = lane.heading + 1; i < lane.end; i++) {
+    const raw = lines[i] ?? '';
+    if (items.has(i) || !/^status\s*:/i.test(unwrapLabel(raw.trim()))) continue;
+    // After the colon, and after the bold or italic markers closing a "**Status:**" label.
+    lines[i] = raw.replace(/:(\s*(?:[*_]{1,2}\s*)?).*$/, `:$1${value}`);
+    return done(doc, lines);
+  }
+  let at = lane.heading + 1;
+  if (/^target\s*:/i.test(unwrapLabel((lines[at] ?? '').trim()))) at++;
+  lines.splice(at, 0, `Status: ${value}`);
+  return done(doc, lines);
 }
 
 /** "1.1.0" → "1.2.0": the release a new roadmap starts with. */

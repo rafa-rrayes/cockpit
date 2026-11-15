@@ -2,6 +2,7 @@
 // The extension host builds one State and posts the whole object to the webview on every change.
 // Everything here is plain JSON (no Dates, no classes): times are epoch milliseconds.
 // This file must not import `vscode` or node modules: both bundles compile it.
+import { type SettingEdit, defaultSettings } from './settings';
 
 // ───────────────────────────── Claude sessions ─────────────────────────────
 
@@ -64,6 +65,9 @@ export interface ClaudeSession {
   updatedAt?: number;
   claudeVersion?: string;
   transcriptPath?: string;
+  /** The session's last answer: the text of its newest assistant message, cut to about 20,000 characters. Only for
+   *  sessions of the workspace's project (compose drops the others, to keep the State small). */
+  report?: string;
   /** Set by the store (not by the Claude adapter): the session runs in a terminal of this VS Code window,
    *  so "Focus terminal" works. */
   inVsCodeTerminal?: boolean;
@@ -125,6 +129,15 @@ export interface WorkItem {
   sessionIds: string[];
 }
 
+/** One job of a CI run, as GitHub lists it on the run page. */
+export interface CiJob {
+  name: string;
+  status: 'success' | 'failure' | 'in_progress' | 'queued' | 'cancelled' | 'skipped' | 'other';
+  url?: string;
+  startedAt?: number;
+  durationMs?: number;
+}
+
 export interface CiRun {
   id: number;
   title: string;
@@ -134,6 +147,8 @@ export interface CiRun {
   url: string;
   startedAt?: number;
   durationMs?: number;
+  /** Only for runs that are queued or in progress: what the run page lists. */
+  jobs?: CiJob[];
 }
 
 export interface Work {
@@ -160,6 +175,9 @@ export interface RoadmapItem {
   id: string;
   text: string;
   status: ItemStatus; // "- [ ]" todo, "- [~]" doing, "- [x]" done
+  /** The branch working on the card: Start Claude records it in ROADMAP.md as "<!-- cockpit:<branch> -->" at the
+   *  end of the card's line, and it is dropped when the branch's pull request merges. */
+  branch?: string;
 }
 
 /** One lane of the board: a planned release, or the backlog (work not yet in a release). */
@@ -182,6 +200,26 @@ export type RoadmapEdit =
   | { op: 'move'; id: string; lane: string; status: ItemStatus; before?: string } // before: an item id of that lane; absent: the lane's end
   | { op: 'remove'; id: string }
   | { op: 'addRelease'; version: string; title?: string };
+
+/** Claude Code's model aliases (`claude --model <alias>`): each names the latest model of its family. */
+export type ClaudeModel = 'fable' | 'opus' | 'sonnet' | 'haiku';
+/** `claude --effort <level>`: how much the model thinks. */
+export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+/** How the board starts a Claude on roadmap cards. */
+export interface LaunchOptions {
+  /** Absent: Claude Code's own default model. */
+  model?: ClaudeModel;
+  effort: Effort;
+  /** 0: the Claude works alone. */
+  subagents: number;
+  /** The model every subagent runs on, whatever the Claude asks for. Absent: Claude Code decides. */
+  subagentModel?: ClaudeModel;
+  /** `claude --worktree`: a new git worktree and branch for the session. */
+  worktree: boolean;
+  /** Move the cards that are still planned to "In progress" once the Claude starts. */
+  markDoing: boolean;
+}
 
 export interface ChangelogEntry {
   version: string; // "Unreleased" or "1.2.0"
@@ -209,7 +247,8 @@ export interface Releases {
 
 // ───────────────────────────── Needs you, Activity ─────────────────────────────
 
-export type AttentionKind = 'session_waiting' | 'ci_failed' | 'pr_changes_requested';
+/** session_uncommitted: a Claude stopped (idle or ended) and left uncommitted changes in its worktree. */
+export type AttentionKind = 'session_waiting' | 'session_uncommitted' | 'ci_failed' | 'pr_changes_requested';
 
 export interface Attention {
   kind: AttentionKind;
@@ -232,6 +271,40 @@ export interface ActivityEvent {
   branch?: string;
 }
 
+// ───────────────────────────── Catch up ─────────────────────────────
+
+/** What a pull request looked like when the person last caught up: merged, closed, or the state of its checks. */
+export type PrMark = 'merged' | 'closed' | CheckSummary['state'];
+
+/** The last time the person caught up (opened Catch up and closed it), and the pull requests as they were then:
+ *  Catch up shows what changed after it. Kept per workspace by the host. */
+export interface CatchUpMark {
+  at: number;
+  /** By pull request number. */
+  prs: Record<string, PrMark>;
+}
+
+// ───────────────────────────── Settings ─────────────────────────────
+
+export type SectionId = 'needs' | 'claudes' | 'roadmap' | 'work' | 'releases' | 'activity';
+
+/** Cockpit's VS Code settings (cockpit.*), checked: see src/settings.ts. */
+export interface Settings {
+  openOnStartup: boolean;
+  /** Claudes shows every project's sessions; off, only the workspace project's. */
+  showAllProjects: boolean;
+  endedSessionDays: number;
+  githubPollSeconds: number;
+  /** Sections the page leaves out. */
+  hiddenSections: SectionId[];
+  /** What the roadmap's launcher opens with. */
+  launch: LaunchOptions;
+  /** The general steps of the prompt a Claude started from the board gets. Empty: the standard ones. */
+  promptSteps: string[];
+  /** Files Release bumps the version in besides the root package.json, relative to the repository root. */
+  releaseVersionFiles: string[];
+}
+
 // ───────────────────────────── State ─────────────────────────────
 
 export interface State {
@@ -246,6 +319,9 @@ export interface State {
   releases: Releases;
   /** Newest first, at most 60. */
   activity: ActivityEvent[];
+  settings: Settings;
+  /** Absent until the person first caught up in this workspace. */
+  caughtUp?: CatchUpMark;
 }
 
 export const emptyState = (): State => ({
@@ -256,6 +332,7 @@ export const emptyState = (): State => ({
   work: { available: false, items: [], ciRuns: [] },
   releases: { available: false, roadmap: [], changelog: [] },
   activity: [],
+  settings: defaultSettings,
 });
 
 // ───────────────────────────── Messages ─────────────────────────────
@@ -267,6 +344,7 @@ export type HostMessage = { type: 'state'; state: State };
 export type WebviewMessage =
   | { type: 'ready' } // the webview loaded: send State
   | { type: 'refresh' }
+  | { type: 'toggleMaximize' } // Zen mode on or off; the Cockpit tab is the active editor when its button is clicked
   | { type: 'resumeSession'; sessionId: string } // new terminal: claude --resume <id> in the session's cwd
   | { type: 'focusSession'; sessionId: string } // show the VS Code terminal running it, when there is one
   | { type: 'openTranscript'; sessionId: string }
@@ -275,4 +353,12 @@ export type WebviewMessage =
   | { type: 'copy'; text: string }
   | { type: 'cleanMerged' } // the host lists what it would delete and asks before deleting anything
   | { type: 'roadmap'; edit: RoadmapEdit } // edits ROADMAP.md; removing an item asks first
-  | { type: 'openRoadmap' }; // ROADMAP.md in the editor
+  | { type: 'startClaude'; ids: string[]; options: LaunchOptions } // a new terminal running claude on these cards
+  | { type: 'openRoadmap' } // ROADMAP.md in the editor
+  | { type: 'setSetting'; edit: SettingEdit } // writes one cockpit.* setting to the user's or the workspace's settings
+  | { type: 'openSettings' } // VS Code's Settings, filtered to Cockpit
+  | { type: 'caughtUp' } // Catch up was closed: what it showed is seen
+  | { type: 'ship'; branch: string } // push the branch and open its PR, after a confirmation that shows both
+  | { type: 'release'; version: string } // the release PR of a lane whose cards are done, after a confirmation
+  | { type: 'tag'; version: string } // tag the merged release and push the tag, after a confirmation
+  | { type: 'pullDefault' }; // git pull --ff-only --autostash in the main checkout

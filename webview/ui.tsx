@@ -1,6 +1,7 @@
 // Small pieces shared by the sections: status words, status dots, ticking times, section frames.
-import type { ComponentChildren, JSX } from 'preact';
-import type { CheckSummary, CiRun, ClaudeSession, SessionStatus } from '../src/model';
+import type { ComponentChildren, JSX, RefObject } from 'preact';
+import { useEffect } from 'preact/hooks';
+import type { CheckSummary, CiJob, CiRun, ClaudeSession, SessionStatus } from '../src/model';
 import { fullDate, since, sinceLong, useNow } from './format';
 import { Icon, type IconName } from './icons';
 
@@ -65,6 +66,9 @@ const ciInfo: Record<CiRun['status'], { tone: Tone; word: string; icon: IconName
   other: { tone: 'muted', word: 'Other', icon: 'ci' },
 };
 
+export const jobStatus = (status: CiJob['status']): { tone: Tone; word: string; icon: IconName } =>
+  status === 'skipped' ? { tone: 'muted', word: 'Skipped', icon: 'stop' } : ciInfo[status];
+
 export const ciStatus = (status: CiRun['status']): { tone: Tone; word: string; icon: IconName } => ciInfo[status];
 
 /** A coloured mark with its word next to it, for CI and check states. */
@@ -102,4 +106,25 @@ export function Section({ id, title, meta, actions, children, tone }: SectionPro
 
 export function Empty({ children }: { children: ComponentChildren }): JSX.Element {
   return <p class="empty">{children}</p>;
+}
+
+/** Closes a popup on a mousedown outside `ref` and on Escape. */
+export function useDismiss(ref: RefObject<HTMLElement | null>, open: boolean, close: (byKey: boolean) => void): void {
+  useEffect(() => {
+    if (!open) return;
+    const outside = (e: MouseEvent): void => {
+      if (e.target instanceof Node && !ref.current?.contains(e.target)) close(false);
+    };
+    const key = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      close(true);
+    };
+    document.addEventListener('mousedown', outside);
+    document.addEventListener('keydown', key, true);
+    return () => {
+      document.removeEventListener('mousedown', outside);
+      document.removeEventListener('keydown', key, true);
+    };
+  }, [open]);
 }
