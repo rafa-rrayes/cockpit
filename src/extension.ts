@@ -1,9 +1,12 @@
 // Activation: one Cockpit tab in the editor area (created, revealed, or restored after a reload), the startup
 // takeover, the status-bar item and the activity-bar entry. Data comes from the Store; actions go to actions.ts.
 import { randomBytes } from 'node:crypto';
-import { basename, join } from 'node:path';
+import { chmodSync } from 'node:fs';
+import { basename, delimiter, join } from 'node:path';
 import * as vscode from 'vscode';
-import { type ActionHost, handleMessage } from './actions';
+import { type ActionHost, handleMessage, runAgentAction } from './actions';
+import type { AgentAction, AgentResult } from './agent';
+import { type Disposable as InboxWatch, watchInbox } from './inbox';
 import type { HostMessage, State } from './model';
 import { defaultClaudeDir } from './sources';
 import { Store } from './store';
@@ -186,6 +189,11 @@ class CockpitPanel implements vscode.Disposable {
     },
   };
 
+  /** A request of the `cockpit` command, run as the board's buttons run (with its own channel: see actions.ts). */
+  act(action: AgentAction): Promise<AgentResult> {
+    return runAgentAction(action, this.host);
+  }
+
   /** A message from the webview (the smoke test sends them through here too). */
   receive(raw: unknown): Promise<void> {
     return handleMessage(raw, this.host);
@@ -226,6 +234,40 @@ function attentionIndicators(store: Store, view: vscode.TreeView<never>): vscode
   update(store.state);
   item.show();
   return vscode.Disposable.from(item, store.onDidChange(update));
+}
+
+/** The `cockpit` command in every terminal of this window: bin/ on their PATH. */
+function cockpitCommand(context: vscode.ExtensionContext): void {
+  const bin = join(context.extensionPath, 'bin');
+  // An installed extension's files may have lost their mode on the way.
+  try {
+    chmodSync(join(bin, 'cockpit'), 0o755);
+  } catch {
+    // Read-only install, or Windows: the shim may still run.
+  }
+  const env = context.environmentVariableCollection;
+  env.description = 'Puts the `cockpit` command on the PATH, so a Claude can ask Cockpit to ship and release.';
+  env.prepend('PATH', `${bin}${delimiter}`);
+}
+
+/** Answers the `cockpit` command for the repository the Store reads, once it knows it, and again when it changes. */
+function inboxFor(store: Store, panel: CockpitPanel, log: vscode.LogOutputChannel): vscode.Disposable {
+  let root: string | undefined;
+  let watch: InboxWatch | undefined;
+  const follow = () => {
+    const next = store.state?.work.repoRoot;
+    if (next === root) return;
+    watch?.dispose();
+    watch = undefined;
+    root = next;
+    if (root) watch = watchInbox(root, (action) => panel.act(action), (line) => log.warn(line));
+  };
+  follow();
+  const sub = store.onDidChange(follow);
+  return new vscode.Disposable(() => {
+    sub.dispose();
+    watch?.dispose();
+  });
 }
 
 /** Offers, once, to stop the Welcome page from opening next to Cockpit. */
@@ -273,6 +315,7 @@ export function activate(context: vscode.ExtensionContext): CockpitTestApi {
       if (e.visible) void panel.open();
     }),
     attentionIndicators(store, view),
+    inboxFor(store, panel, log),
     vscode.commands.registerCommand('cockpit.open', () => panel.open()),
     vscode.commands.registerCommand('cockpit.refresh', () => store.refresh()),
     // Maximizing brings the Cockpit tab to the front and closes what is around it with VS Code's own commands: both
@@ -288,6 +331,8 @@ export function activate(context: vscode.ExtensionContext): CockpitTestApi {
       deserializeWebviewPanel: async (restored) => panel.restore(restored),
     }),
   );
+
+  cockpitCommand(context);
 
   if (vscode.workspace.getConfiguration('cockpit').get<boolean>('openOnStartup', true)) {
     void panel.open().then(() => offerQuietStartup(context));
