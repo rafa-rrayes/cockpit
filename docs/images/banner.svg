@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f1b3d"/>
+      <stop offset="1" stop-color="#0c3a46"/>
+    </linearGradient>
+    <linearGradient id="arc" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4daafc"/>
+      <stop offset="0.55" stop-color="#89d185"/>
+      <stop offset="1" stop-color="#e8b54a"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.22" cy="0.5" r="0.4">
+      <stop offset="0" stop-color="#4daafc" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#4daafc" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#ffffff" stroke-opacity="0.04"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="320" rx="20" fill="url(#bg)"/>
+  <rect width="1280" height="320" rx="20" fill="url(#grid)"/>
+  <rect width="1280" height="320" rx="20" fill="url(#glow)"/>
+
+  <!-- gauge: the extension's icon, scaled up -->
+  <g transform="translate(150 50) scale(9)" fill="none" stroke-linecap="round">
+    <path d="M4.2 17.5a8.5 8.5 0 1 1 15.6 0" stroke="url(#arc)" stroke-width="1.6"/>
+    <path d="M12 13.5l4.2-4.6" stroke="#ffffff" stroke-width="1.6"/>
+    <circle cx="12" cy="13.5" r="1.6" fill="#ffffff" stroke="none"/>
+    <path d="M12 5.4v1.5M6.3 7.8l1 1M17.7 7.8l-1 1M4.3 13.4h1.5M18.2 13.4h1.5" stroke="#9fb3c8" stroke-width="1.4"/>
+    <path d="M8 19.5h8" stroke="#9fb3c8" stroke-width="1.6"/>
+  </g>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+    <text x="440" y="150" fill="#ffffff" font-size="84" font-weight="700" letter-spacing="-2">Cockpit</text>
+    <text x="444" y="200" fill="#c7d5e4" font-size="27">Every Claude Code session, your branches, PRs, CI and</text>
+    <text x="444" y="236" fill="#c7d5e4" font-size="27">roadmap — one live view in place of the editor.</text>
+    <g font-size="17" font-weight="600">
+      <rect x="444" y="262" width="118" height="30" rx="15" fill="#4daafc" fill-opacity="0.16" stroke="#4daafc" stroke-opacity="0.5"/>
+      <text x="503" y="282" fill="#8cc8ff" text-anchor="middle">VS Code</text>
+      <rect x="574" y="262" width="138" height="30" rx="15" fill="#89d185" fill-opacity="0.14" stroke="#89d185" stroke-opacity="0.5"/>
+      <text x="643" y="282" fill="#aee3aa" text-anchor="middle">Claude Code</text>
+      <rect x="724" y="262" width="134" height="30" rx="15" fill="#e8b54a" fill-opacity="0.14" stroke="#e8b54a" stroke-opacity="0.5"/>
+      <text x="791" y="282" fill="#f3d38f" text-anchor="middle">git · GitHub</text>
+    </g>
+  </g>
+</svg>

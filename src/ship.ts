@@ -397,7 +397,8 @@ export async function pushTag(repoRoot: string, version: string, sha: string, pu
 export async function pullDefault(repoRoot: string): Promise<Outcome> {
   const r = await git(repoRoot, ['pull', '--ff-only', '--autostash'], NETWORK_MS);
   const said = `${r.stdout}\n${r.stderr}`;
-  if (/autostash resulted in conflicts/i.test(said)) {
+  // Older git: "Applying autostash resulted in conflicts."; newer (2.56 at least): "…stashed, however applying them\nresulted in conflicts."
+  if (/resulted in conflicts/i.test(said)) {
     return stop(['pulled'], 'Your uncommitted changes conflict with what came in: git left conflict markers in the files, and your changes are also safe in the stash (git stash list).');
   }
   if (!r.ok) return stop([], `git pull failed: ${why(r)}`);

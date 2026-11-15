@@ -1,0 +1,16 @@
+name: Feature request
+description: An idea for Cockpit
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to keep track of or do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you'd like
+      description: What the page would show or do. A sketch or screenshot of the picture in your head is welcome.

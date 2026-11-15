@@ -1,7 +1,80 @@
-# Cockpit
+<p align="center">
+  <img src="docs/images/banner.svg" alt="Cockpit — every Claude Code session, your branches, PRs, CI and roadmap in one live view" width="100%">
+</p>
 
-A VS Code extension that takes over the editor area with a live, interactive overview of the project and of every
-Claude Code session on this machine:
+<p align="center">
+  <a href="https://github.com/rafa-rrayes/cockpit/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/rafa-rrayes/cockpit?style=flat-square&color=4daafc"></a>
+  <img alt="VS Code 1.100+" src="https://img.shields.io/badge/VS%20Code-1.100%2B-007ACC?style=flat-square&logo=visualstudiocode&logoColor=white">
+  <img alt="Built for Claude Code" src="https://img.shields.io/badge/built%20for-Claude%20Code-D97757?style=flat-square&logo=anthropic&logoColor=white">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-Preact-3178C6?style=flat-square&logo=typescript&logoColor=white">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/rafa-rrayes/cockpit?style=flat-square&color=89d185"></a>
+</p>
+
+<p align="center">
+  <b>Running five Claudes at once? Cockpit tells you which one needs you, what each one finished,<br>
+  and ships their branches — without leaving VS Code.</b>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#whats-on-the-page">Features</a> ·
+  <a href="#delivery-ship-and-release">Ship &amp; release</a> ·
+  <a href="#the-cockpit-command">The <code>cockpit</code> command</a> ·
+  <a href="#settings">Settings</a> ·
+  <a href="#development">Development</a>
+</p>
+
+![Cockpit overview, dark theme](docs/images/overview-dark.png)
+
+## Why
+
+Claude Code makes it easy to have several sessions going at once — in worktrees, in terminals, across projects. Keeping
+track of them is the hard part: which one is stuck on a permission prompt, which one finished an hour ago with
+uncommitted files, which branch is ready to merge, and whether CI on `main` just went red.
+
+Cockpit is a VS Code tab that answers all of that at a glance. It reads Claude Code's local session files, your git
+repository and (optionally) GitHub through `gh`, and turns them into one live page — with the actions to act on it.
+
+## Highlights
+
+|  |  |
+| :-- | :-- |
+| 🚨 **Needs you** — Claudes waiting on a prompt, red CI on `main`, PRs with changes requested, stopped work with uncommitted files. | 🤖 **Claudes** — a live card per session across every project: status, branch, last prompt, subagents and workflow runs. |
+| 📬 **Catch up** — what each Claude finished since you last looked, with its report and the one next action (Ship, Resume, Open PR). | 🗺️ **Roadmap** — a drag-and-drop kanban backed by a plain Markdown file, with a lane per release. Start a Claude on any card. |
+| 🌿 **Work** — branches and worktrees as a board (In progress / Merged / Stale), PR and check status, safe **Clean merged…**. | 🚀 **Ship & release** — merge, open PRs, bump versions, date the changelog and tag, locally or via GitHub, always after a confirmation. |
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/catchup.png" alt="Catch up panel"><br><sub><b>Catch up</b> — each finished Claude's report, its branch and the next action.</sub></td>
+    <td width="50%"><img src="docs/images/detail.png" alt="Claude session details"><br><sub><b>Session details</b> — recent prompts, folder, branch, transcript; resume or focus its terminal.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/images/roadmap.png" alt="Roadmap board"><br><sub><b>Roadmap</b> — lanes per release, cards linked to branches and PRs, Release and Tag buttons.</sub></td>
+    <td width="50%"><img src="docs/images/work.png" alt="Work board"><br><sub><b>Work</b> — branches, worktrees, PRs and CI runs, with what is safe to clean.</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/images/overview-light.png" alt="Cockpit overview, light theme"><br><sub>Follows your VS Code theme — here in Light Modern.</sub></td>
+  </tr>
+</table>
+
+<sub>Screenshots use the built-in sample data of the browser preview (<code>dist/dev.html</code>); see <a href="#development">Development</a>.</sub>
+
+## Quick start
+
+1. Download `cockpit-<version>.vsix` from the [latest release](https://github.com/rafa-rrayes/cockpit/releases/latest)
+   (or [build it yourself](#build-and-install)).
+2. Install it: `code --install-extension cockpit-<version>.vsix`, then reload the window.
+3. Open a git repository and run **Cockpit: Open** — or click the gauge icon in the activity bar.
+
+Requirements: VS Code 1.100+, `git` on the PATH, and [Claude Code](https://claude.com/claude-code) sessions on this
+machine. The [GitHub CLI](https://cli.github.com) (`gh`, logged in) is optional and adds pull requests and CI.
+
+## What's on the page
+
+Cockpit takes over the editor area with a live, interactive overview of the project and of every Claude Code session
+on this machine:
 
 - **Needs you**: Claudes waiting on a permission prompt or a question, a failed CI run on the default branch,
   pull requests with changes requested, and a Claude that stopped (idle or ended) with uncommitted files in its
