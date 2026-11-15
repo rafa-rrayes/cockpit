@@ -269,7 +269,7 @@ describe('buildActivity', () => {
 describe('compose', () => {
   it('outside git: no work, sessions and projects still there', () => {
     const state = compose({ now: NOW, workspace: { name: 'notes', path: '/p/notes' }, workspaceProjectKey: '/p/notes', sessions: [session('a', { projectKey: '/p/notes' })] });
-    expect(state.work).toEqual({ available: false, items: [], ciRuns: [] });
+    expect(state.work).toEqual({ available: false, hasOrigin: false, delivery: 'pr', items: [], ciRuns: [] });
     expect(state.releases.available).toBe(false);
     expect(state.projects[0]).toMatchObject({ key: '/p/notes', isWorkspace: true, sessionIds: ['a'] });
     expect(Object.keys(state.sessions)).toEqual(['a']);

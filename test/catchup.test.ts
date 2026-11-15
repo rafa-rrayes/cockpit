@@ -61,7 +61,7 @@ function state(sessions: ClaudeSession[], items: WorkItem[], extra: Partial<Stat
     generatedAt: NOW,
     sessions: Object.fromEntries(sessions.map((s) => [s.sessionId, s])),
     projects: [{ key: ROOT, name: 'app', isWorkspace: true, sessionIds: sessions.map((s) => s.sessionId) }],
-    work: { available: true, repoRoot: ROOT, defaultBranch: 'main', github: 'o/r', items, ciRuns: [] },
+    work: { available: true, repoRoot: ROOT, defaultBranch: 'main', github: 'o/r', hasOrigin: true, delivery: 'pr', items, ciRuns: [] },
     releases: { ...base.releases, roadmap: parseRoadmap(ROADMAP) },
     ...extra,
   };

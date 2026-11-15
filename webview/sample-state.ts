@@ -520,6 +520,8 @@ export function sampleState(now = Date.now()): State {
       repoRoot: HARBOR,
       defaultBranch: 'main',
       github: 'example-org/harbor',
+      hasOrigin: true,
+      delivery: 'pr',
       items,
       ciRuns: [
         { id: 9003, title: 'Search ranking uses the new tokenizer', workflow: 'Deploy staging', branch: 'main', status: 'queued', url: `${GH}/actions/runs/9003`, startedAt: ago(MIN) },
@@ -540,6 +542,7 @@ export function sampleState(now = Date.now()): State {
       latestTagAt: ago(3 * DAY),
       commitsSinceTag: 23,
       roadmapPath: `${HARBOR}/ROADMAP.md`,
+      roadmapName: 'ROADMAP.md',
       roadmapExists: true,
       roadmap: parseRoadmap(sampleRoadmap),
       changelog: [

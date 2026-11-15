@@ -9,6 +9,7 @@ import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
 import * as vscode from 'vscode';
+import { type AgentAction, type AgentResult } from './agent';
 import { markOf, shipProblem } from './catchup';
 import { removeMerged } from './clean';
 import { runGh } from './data/github';
@@ -116,6 +117,12 @@ export async function handleMessage(raw: unknown, host: ActionHost): Promise<voi
       return;
     }
   }
+}
+
+/** What the `cockpit` command asked for (src/cli.ts, through the inbox): the same actions as the board's buttons,
+ *  answered in words. A stub until 0.3.0's brief A fills it in. */
+export async function runAgentAction(_action: AgentAction, _host: ActionHost): Promise<AgentResult> {
+  return { ok: false, lines: ['not implemented'] };
 }
 
 let roadmapQueue: Promise<void> = Promise.resolve();

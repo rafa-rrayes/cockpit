@@ -151,6 +151,8 @@ export interface CiRun {
   jobs?: CiJob[];
 }
 
+export type Delivery = 'direct' | 'pr';
+
 export interface Work {
   /** False outside a git repository: the UI hides the section. */
   available: boolean;
@@ -160,6 +162,12 @@ export interface Work {
   github?: string;
   /** Why GitHub data is missing, in a few words, when it is. */
   githubNote?: string;
+  /** The repository has a remote named "origin". */
+  hasOrigin: boolean;
+  /** How finished work reaches the default branch: `direct` merges into it (and releases with a commit and a tag
+   *  on it), here in the main checkout; `pr` goes through GitHub pull requests. From `.cockpit/config.json`'s
+   *  "delivery" ("auto": `pr` when there is an origin, else `direct`). */
+  delivery: Delivery;
   items: WorkItem[];
   ciRuns: CiRun[]; // newest first, at most 10
 }
@@ -242,8 +250,10 @@ export interface Releases {
   latestTag?: string;
   latestTagAt?: number;
   commitsSinceTag?: number;
-  /** Where ROADMAP.md is, or would be created: set whenever a folder is open. */
+  /** Where the board's file is, or would be created: set whenever a folder is open. */
   roadmapPath?: string;
+  /** The same file as a path from the main checkout, for display: ".cockpit/roadmap.md", "ROADMAP.md". */
+  roadmapName?: string;
   roadmapExists?: boolean;
   /** Lanes in file order. */
   roadmap: ReleasePlan[];
@@ -335,7 +345,7 @@ export const emptyState = (): State => ({
   attention: [],
   sessions: {},
   projects: [],
-  work: { available: false, items: [], ciRuns: [] },
+  work: { available: false, hasOrigin: false, delivery: 'pr', items: [], ciRuns: [] },
   releases: { available: false, roadmap: [], changelog: [] },
   activity: [],
   settings: defaultSettings,

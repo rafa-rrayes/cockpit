@@ -281,6 +281,9 @@ export function compose(input: ComposeInput): State {
     projects,
     work: {
       available: git?.available ?? false,
+      // Placeholders until the git read and .cockpit/config.json say (0.3.0, brief A).
+      hasOrigin: false,
+      delivery: 'pr',
       items,
       ciRuns: github?.ciRuns ?? [],
     },
