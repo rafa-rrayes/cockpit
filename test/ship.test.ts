@@ -216,7 +216,11 @@ describe('Release and Tag', () => {
     const merged = fakeGh({ 'release-0.2.0': [{ number: 9, state: 'MERGED', url: 'u', mergeCommit: { oid: sha } }] });
     expect(await findRelease(merged.gh, repo, 'main', '0.2.0')).toEqual({ ok: true, sha, pr: 9 });
     expect(await pushTag(repo, '0.2.0', sha)).toEqual({ ok: true, done: [`tagged ${sha.slice(0, 7)} v0.2.0`, 'pushed v0.2.0 to origin'] });
-    expect(sh(base, ['--git-dir', join(base, 'origin.git'), 'rev-parse', 'v0.2.0']).trim()).toBe(sha);
+    // An annotated tag: a tag object pointing at the merge, with the release as its message.
+    const hubGit = ['--git-dir', join(base, 'origin.git')];
+    expect(sh(base, [...hubGit, 'cat-file', '-t', 'refs/tags/v0.2.0']).trim()).toBe('tag');
+    expect(sh(base, [...hubGit, 'rev-parse', 'v0.2.0^{commit}']).trim()).toBe(sha);
+    expect(sh(base, [...hubGit, 'tag', '-l', '--format=%(contents:subject)', 'v0.2.0']).trim()).toBe('Release 0.2.0');
     expect(await findRelease(merged.gh, repo, 'main', '0.2.0')).toEqual({ ok: false, error: 'v0.2.0 is already tagged in this repository.' });
     sh(repo, ['tag', '-d', 'v0.2.0']);
     expect(await findRelease(merged.gh, repo, 'main', '0.2.0')).toEqual({ ok: false, error: 'v0.2.0 is already tagged on origin.' });

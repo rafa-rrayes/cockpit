@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { type RunResult, runGit } from './data/git';
 import { parseChangelog, versionFrom } from './data/releases';
-import { bumpVersion, datedChangelog, releaseBranch, tagName } from './publish';
+import { bumpVersion, datedChangelog, releaseBranch, releaseTitle, tagName } from './publish';
 
 export type Gh = (cwd: string, args: string[]) => Promise<RunResult>;
 
@@ -275,11 +275,13 @@ export async function findRelease(gh: Gh, repoRoot: string, base: string, versio
   return { ok: true, sha: merged.mergeCommit, pr: merged.number };
 }
 
-/** Tags `sha` and pushes the tag; a tag that could not be pushed is deleted again, so nothing is left half-made. */
+/** Tags `sha` with an annotated tag (a tagger, a date and the message "Release X", which `git describe` and
+ *  `git push --follow-tags` go by) and pushes it; a tag that could not be pushed is deleted again, so nothing is left
+ *  half-made. Git needs a name and email to tag with, as it does to commit. */
 export async function pushTag(repoRoot: string, version: string, sha: string): Promise<Outcome> {
   const tag = tagName(version);
   const done: string[] = [];
-  const made = await git(repoRoot, ['tag', tag, sha]);
+  const made = await git(repoRoot, ['tag', '-a', '-m', releaseTitle(version), tag, sha]);
   if (!made.ok) return stop(done, `Could not tag ${sha.slice(0, 7)}: ${why(made)}`);
   done.push(`tagged ${sha.slice(0, 7)} ${tag}`);
   const push = await git(repoRoot, ['push', '--quiet', REMOTE, `refs/tags/${tag}`], NETWORK_MS);

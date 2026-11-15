@@ -84,7 +84,7 @@ confirmation dialog, and does nothing if you cancel. If a step fails, a dialog s
   dates `## Unreleased` in `CHANGELOG.md` as `## X - <today>` (leaving a new, empty `## Unreleased` above it), sets the lane's `Status: shipped`, commits on a new
   branch `release-X`, pushes it and opens the pull request. The temporary worktree is always removed.
 - **Tag vX…** (the release pull request merged, or the lane says shipped, and no tag at or after X): finds the
-  merge commit through `gh`, creates the lightweight tag `vX` on it and pushes it. The dialog says that a pushed tag
+  merge commit through `gh`, creates the annotated tag `vX` on it and pushes it. The dialog says that a pushed tag
   may start a deploy. If the push fails, the local tag is deleted again.
 
 A card's link to its branch is an HTML comment at the end of its line in `ROADMAP.md`, which Markdown hides:

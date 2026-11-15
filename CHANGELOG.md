@@ -39,6 +39,7 @@
 - A new setting, `cockpit.release.versionFiles` (also in the Settings popover): files whose version Release bumps
   besides `package.json`.
 - Needs you lists a Claude that stopped with uncommitted files in its worktree.
+- Tag makes an annotated tag (tagger, date, message), so `git describe` and `git push --follow-tags` see it.
 
 ## 0.1.1 - 2026-11-13
 

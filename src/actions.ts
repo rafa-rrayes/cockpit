@@ -443,7 +443,7 @@ async function tag(version: string, host: ActionHost): Promise<void> {
   if (!found.ok) return refuse(found.error);
   const name = tagName(version);
   const go = `Tag and push ${name}`;
-  const detail = `Tags ${found.sha.slice(0, 7)}, the merge of the release pull request #${found.pr} into ${at.base}, as ${name}, and pushes the tag to ${REMOTE}.\n\nA pushed tag may deploy: release workflows often start on a new tag. Cockpit never tags on its own.`;
+  const detail = `Tags ${found.sha.slice(0, 7)}, the merge of the release pull request #${found.pr} into ${at.base}, as ${name} (an annotated tag, "${releaseTitle(version)}"), and pushes the tag to ${REMOTE}.\n\nA pushed tag may deploy: release workflows often start on a new tag. Cockpit never tags on its own.`;
   if ((await vscode.window.showWarningMessage(`Tag ${name} and push it?`, { modal: true, detail }, go)) !== go) return;
   const outcome = await progress(`tagging ${name}…`, () => pushTag(at.repoRoot, version, found.sha));
   await host.refresh();
