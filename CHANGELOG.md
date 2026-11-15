@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Release bumps `package-lock.json` along with `package.json`, including a lockfile an earlier release left
+  behind.
+- MIT license.
+
 ## 0.3.1 - 2026-11-14
 
 - Shipped lanes each show their own tag (`v0.2.0`), not only the newest one's.

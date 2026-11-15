@@ -64,6 +64,29 @@ export function bumpVersion(file: string, text: string, from: string, to: string
   return { ok: true, text: text.replace(re, json ? `$1${to}$2` : `$1${to}`) };
 }
 
+/** package-lock.json with the root package's version set to `to`: the top-level "version" and, from lockfile v2 on,
+ *  packages[""].version. Whatever they held before, since npm derives both from package.json (a lockfile left behind
+ *  by an earlier release catches up). The rest of the text is kept as it is. */
+export function bumpLockfile(text: string, to: string): TextEdit {
+  let lock: { version?: unknown; packages?: Record<string, { version?: unknown }> };
+  try {
+    lock = JSON.parse(text);
+  } catch {
+    return { ok: false, error: 'package-lock.json is not valid JSON.' };
+  }
+  const value = JSON.stringify(to);
+  // The top-level "version" is the first one at two spaces of indent; packages[""]'s is the first after `"": {`.
+  let out = text;
+  if (typeof lock.version === 'string') out = out.replace(/^(\s*"version"\s*:\s*)"[^"]*"/m, `$1${value}`);
+  const root = out.search(/"packages"\s*:\s*\{\s*""\s*:\s*\{/);
+  if (typeof lock.packages?.['']?.version === 'string' && root >= 0) {
+    const rest = out.slice(root).replace(/("version"\s*:\s*)"[^"]*"/, `$1${value}`);
+    out = out.slice(0, root) + rest;
+  }
+  if (out === text && lock.version !== to) return { ok: false, error: 'package-lock.json holds no version.' };
+  return { ok: true, text: out };
+}
+
 /** CHANGELOG.md with what was under "## Unreleased" (or "## [Unreleased]") under a new "## X.Y.Z - YYYY-MM-DD" (or
  *  "## [X.Y.Z] - YYYY-MM-DD") heading, which releases.ts reads back as that release and its date, and an empty
  *  Unreleased section left above it. */

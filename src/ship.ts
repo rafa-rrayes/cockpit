@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { type RunResult, runGit } from './data/git';
 import { parseChangelog, versionFrom } from './data/releases';
-import { bumpVersion, datedChangelog, releaseBranch, releaseTitle, tagName } from './publish';
+import { bumpLockfile, bumpVersion, datedChangelog, releaseBranch, releaseTitle, tagName } from './publish';
 
 export type Gh = (cwd: string, args: string[]) => Promise<RunResult>;
 
@@ -176,7 +176,7 @@ export interface ReleaseDraft {
 type Drafted = { ok: true; draft: ReleaseDraft } | { ok: false; error: string };
 
 /** The release's edits, from files as `read` gives them (a path from the root, undefined when there is no such file):
- *  the version in package.json and `versionFiles`, and CHANGELOG.md's Unreleased dated. `where` names what was read,
+ *  the version in package.json (and package-lock.json) and `versionFiles`, and CHANGELOG.md's Unreleased dated. `where` names what was read,
  *  for the errors. */
 async function releaseFiles(
   read: (path: string) => Promise<string | undefined>,
@@ -189,7 +189,7 @@ async function releaseFiles(
   const bumps: { path: string; text: string }[] = [];
   const pkg = await read('package.json');
   if (pkg !== undefined && versionFrom('package.json', pkg)) bumps.push({ path: 'package.json', text: pkg });
-  for (const path of opts.versionFiles.filter((f) => f !== 'package.json')) {
+  for (const path of opts.versionFiles.filter((f) => f !== 'package.json' && f !== 'package-lock.json')) {
     const text = await read(path);
     if (text === undefined) return fail(`${path} (cockpit.release.versionFiles) is not in ${where}.`);
     bumps.push({ path, text });
@@ -202,6 +202,13 @@ async function releaseFiles(
     const r = bumpVersion(b.path, b.text, from as string, version);
     if (!r.ok) return fail(r.error);
     files.push({ path: b.path, text: r.text, change: `${from} → ${version}` });
+  }
+  // npm's lockfile repeats package.json's version, so it moves with it.
+  const lock = bumps[0]?.path === 'package.json' ? await read('package-lock.json') : undefined;
+  if (lock !== undefined) {
+    const r = bumpLockfile(lock, version);
+    if (!r.ok) return fail(r.error);
+    if (r.text !== lock) files.push({ path: 'package-lock.json', text: r.text, change: `→ ${version}` });
   }
 
   let notes: string[] = [];

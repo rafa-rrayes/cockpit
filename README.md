@@ -115,7 +115,7 @@ or merged, and no Claude working on it (the Claude that runs `cockpit ship` on i
 - **Merge into main…** (`cockpit ship`): `git merge` of the branch into the default branch, in the main checkout,
   which has to be on that branch. A fast-forward when it can be one; a merge that conflicts is undone. Then the
   branch's cards are marked done and unlinked on the board. With an `origin`, the default branch is pushed.
-- **Release X…** (`cockpit release X`), on a lane whose cards are all done: bumps the version in `package.json`
+- **Release X…** (`cockpit release X`), on a lane whose cards are all done: bumps the version in `package.json` (and `package-lock.json`)
   and the files in `cockpit.release.versionFiles`, dates `## Unreleased` in `CHANGELOG.md` as `## X - <today>`
   (leaving a new, empty `## Unreleased` above it), and commits `Release X` with those files only, plus the board
   when git tracks it. It tags that commit `vX` (annotated) and marks the lane shipped. A file it bumps that has
