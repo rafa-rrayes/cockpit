@@ -249,6 +249,8 @@ export interface Releases {
   versionSource?: string;
   latestTag?: string;
   latestTagAt?: number;
+  /** Every version tag (`v1.2.0`), newest first: a shipped lane shows its own. */
+  tags?: string[];
   commitsSinceTag?: number;
   /** Where the board's file is, or would be created: set whenever a folder is open. */
   roadmapPath?: string;

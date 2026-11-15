@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Shipped lanes each show their own tag (`v0.2.0`), not only the newest one's.
+
 ## 0.3.0 - 2026-11-14
 
 - The board lives in `.cockpit/roadmap.md`, in a `.cockpit/` folder that keeps itself out of git, so it never shows

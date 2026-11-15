@@ -3,7 +3,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { parseChangelog, parseLatestTag, parseRoadmap, readReleases, versionFrom } from '../src/data/releases';
+import { parseChangelog, parseLatestTag, parseTags, parseRoadmap, readReleases, versionFrom } from '../src/data/releases';
 import { loadGit } from '../src/sources';
 
 const dir = join(__dirname, 'fixtures/releases');
@@ -102,6 +102,7 @@ describe('versionFrom', () => {
     expect(parseLatestTag('v1.10.0\t1794000000\nv1.9.0\t1793000000\n')).toEqual({ tag: 'v1.10.0', at: 1794000000_000 });
     expect(parseLatestTag('very-old\t1\nv2\t\n')).toEqual({ tag: 'v2' });
     expect(parseLatestTag('')).toBeUndefined();
+    expect(parseTags('v1.10.0\t1\nvery-old\t2\nv1.9.0\t\n')).toEqual(['v1.10.0', 'v1.9.0']);
   });
 });
 
@@ -142,6 +143,7 @@ describe('readReleases on a real repository', () => {
     const r = await readReleases(repo);
     expect(r).toMatchObject({ available: true, currentVersion: '1.1.0', versionSource: 'app/app.json', latestTag: 'v0.10.0', commitsSinceTag: 2 });
     expect(r.latestTagAt).toBeGreaterThan(0);
+    expect(r.tags).toEqual(['v0.10.0', 'v0.10.0-rc1', 'v0.9.0']);
     expect(r.roadmap).toHaveLength(5);
     expect(r.changelog).toEqual([]);
   });

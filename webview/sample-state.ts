@@ -540,6 +540,7 @@ export function sampleState(now = Date.now()): State {
       versionSource: 'app/app.json',
       latestTag: 'v1.4.0',
       latestTagAt: ago(3 * DAY),
+      tags: ['v1.4.0', 'v1.3.0', 'v1.2.0'],
       commitsSinceTag: 23,
       roadmapPath: `${HARBOR}/ROADMAP.md`,
       roadmapName: 'ROADMAP.md',

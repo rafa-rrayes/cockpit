@@ -769,7 +769,7 @@ export function Roadmap(): JSX.Element {
                 <summary>
                   <span class="mono">{lane.version}</span>
                   {lane.title && <span class="rm-lane-title">{lane.title}</span>}
-                  {r.latestTag?.replace(/^v/, '') === lane.version && <span class="mono muted">{tagName(lane.version)}</span>}
+                  {r.tags?.includes(tagName(lane.version)) && <span class="mono muted">{tagName(lane.version)}</span>}
                   <span class="muted rm-shipped-count">{lane.items.length === 1 ? '1 card' : `${lane.items.length} cards`}</span>
                 </summary>
                 {laneBody(lane)}

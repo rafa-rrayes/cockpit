@@ -126,6 +126,14 @@ function tomlVersion(text: string, sections: string[]): string | undefined {
   return undefined;
 }
 
+/** Every tag that looks like a version, in the order given (newest first). */
+export function parseTags(text: string): string[] {
+  return text
+    .split('\n')
+    .map((line) => line.split('\t')[0] ?? '')
+    .filter((tag) => /^v\d/.test(tag));
+}
+
 /** Parses `git tag --list v* --sort=-v:refname --format=%(refname:short)%09%(creatordate:unix)`: the first
  *  tag that looks like a version. */
 export function parseLatestTag(text: string): { tag: string; at?: number } | undefined {
@@ -176,6 +184,7 @@ export async function readReleases(dir: string, repoRoot = dir, config?: Cockpit
   }
 
   const latest = tags.ok ? parseLatestTag(tags.stdout) : undefined;
+  if (tags.ok) out.tags = parseTags(tags.stdout);
   if (latest) {
     out.latestTag = latest.tag;
     if (latest.at) out.latestTagAt = latest.at;
