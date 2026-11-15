@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-11-14
+
 - The board lives in `.cockpit/roadmap.md`, in a `.cockpit/` folder that keeps itself out of git, so it never shows
   in `git status` and never blocks a merge or a pull. A project that already has a `ROADMAP.md` keeps using it, and
   `.cockpit/config.json` can point at any file (`"roadmap": "ROADMAP.md"`). There is one board per repository: every

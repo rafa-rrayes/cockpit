@@ -19,6 +19,14 @@ Status: shipped
 
 - [x] Make the panel occupy the whole width when maximized <!-- cockpit:worktree-0.2.2-make-the-panel-occupy-the-whole -->
 
+## 0.3.0
+Status: shipped
+
+- [x] Board in .cockpit/ and delivery modes, direct or pr (brief A in /Users/Rafa/RRayes/cockpit/tasks/todo.md)
+- [x] The cockpit command a Claude runs: status, ship, release (brief B in /Users/Rafa/RRayes/cockpit/tasks/todo.md)
+- [x] UI follows the delivery mode and says why an action is unavailable (brief C in /Users/Rafa/RRayes/cockpit/tasks/todo.md)
+
 ## Backlog
 
 - [ ] First real Ship → merge → Pull → Release → Tag against GitHub (only a fake gh so far)
+- [ ] Release bumps package-lock.json along with package.json
