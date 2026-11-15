@@ -14,6 +14,11 @@ Status: shipped
 - [x] Maximize without changing Zen mode's defaults
 - [x] Smoke test for Ship, Release, Tag, Pull and Catch up
 
+## 0.2.2
+Status: shipped
+
+- [x] Make the panel occupy the whole width when maximized <!-- cockpit:worktree-0.2.2-make-the-panel-occupy-the-whole -->
+
 ## Backlog
 
 - [ ] First real Ship → merge → Pull → Release → Tag against GitHub (only a fake gh so far)

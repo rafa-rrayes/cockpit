@@ -2,7 +2,7 @@
   "name": "cockpit",
   "displayName": "Cockpit",
   "description": "A live overview of the project and every Claude Code session, in place of the editor.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "rrayes",
   "private": true,
   "license": "UNLICENSED",
