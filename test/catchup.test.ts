@@ -188,7 +188,7 @@ describe('catchUp', () => {
 });
 
 describe('canShip and laneOf', () => {
-  it('ships a clean branch ahead of the default one, in its own worktree, with no PR and no Claude at work', () => {
+  it('ships a clean branch ahead of the default one, with or without a worktree, with no PR and no Claude at work', () => {
     const ready = item('b', { worktreePath: `${ROOT}/b`, ahead: 1, sessionIds: ['s'] });
     const ok = (i: WorkItem, sessions: ClaudeSession[] = [session('s', {})], extra: Partial<State['work']> = {}) => {
       const s = state(sessions, [main, i]);
@@ -198,7 +198,8 @@ describe('canShip and laneOf', () => {
     expect(ok({ ...ready, pr: pr(1, 'b', { state: 'closed' }) })).toBe(true);
     expect(ok({ ...ready, dirtyCount: 1 })).toBe(false);
     expect(ok({ ...ready, ahead: 0 })).toBe(false);
-    expect(ok({ ...ready, worktreePath: undefined })).toBe(false);
+    // A branch with no worktree ships from the main checkout: no board commit needs one any more.
+    expect(ok({ ...ready, worktreePath: undefined })).toBe(true);
     expect(ok({ ...ready, pr: pr(1, 'b', {}) })).toBe(false);
     expect(ok({ ...ready, pr: pr(1, 'b', { state: 'merged' }) })).toBe(false);
     expect(ok(ready, [session('s', { live: true, status: 'busy' })])).toBe(false);
@@ -208,6 +209,20 @@ describe('canShip and laneOf', () => {
     expect(shipProblem({ ...ready, dirtyCount: 2 }, st)).toBe('b has 2 uncommitted files: commit them, or resume its Claude, first.');
     expect(shipProblem({ ...ready, pr: pr(7, 'b', {}) }, st)).toBe('b already has pull request #7 (open).');
     expect(shipProblem(ready, { ...st, work: { ...st.work, github: undefined, githubNote: 'gh not logged in' } })).toBe('GitHub is not available here (gh not logged in): Cockpit publishes through gh.');
+  });
+
+  it('asks the Claude at work to wait, unless it is the one asking; in direct delivery, no GitHub but the main checkout on the default branch', () => {
+    const ready = item('b', { worktreePath: `${ROOT}/b`, ahead: 1, sessionIds: ['s'] });
+    const busy = state([session('s', { live: true, status: 'busy' })], [main, ready]);
+    expect(shipProblem(ready, busy)).toBe('A Claude is still working on b.');
+    expect(shipProblem(ready, busy, { self: true })).toBeUndefined();
+
+    const st = state([session('s', {})], [main, ready]);
+    const direct = (items: WorkItem[]): State => ({ ...st, work: { ...st.work, items, delivery: 'direct', github: undefined, githubNote: 'no GitHub remote' } });
+    expect(shipProblem(ready, direct([main, ready]))).toBeUndefined();
+    // The main checkout is on another branch: the merge has nowhere to happen.
+    const away = { ...main, worktreePath: undefined };
+    expect(shipProblem(ready, direct([away, { ...ready }]))).toBe(`The main checkout (${ROOT}) is not on main: b is merged into main there.`);
   });
 
   it("finds the lane of a branch's cards, else the backlog", () => {

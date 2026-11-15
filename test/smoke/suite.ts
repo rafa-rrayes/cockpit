@@ -1,7 +1,7 @@
 // Runs inside the VS Code that run.mjs starts. The extension's activate() returns a small test API.
 import * as assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import * as vscode from 'vscode';
 import type { CockpitTestApi } from '../../src/extension';
@@ -64,12 +64,17 @@ export async function run(): Promise<void> {
   const lanes = () => api.state()?.releases.roadmap ?? [];
   const card = (text: string) => lanes().flatMap((l) => l.items).find((i) => i.text === text);
   const edit = (e: RoadmapEdit) => api.receive({ type: 'roadmap', edit: e });
-  assert.ok(roadmapFile.endsWith('/shop/ROADMAP.md'), 'the roadmap lives at the top of the worktree');
+  assert.ok(roadmapFile.endsWith('/shop/.cockpit/roadmap.md'), 'a new board goes in .cockpit/ of the main checkout');
+  assert.equal(state.releases.roadmapName, '.cockpit/roadmap.md');
   assert.equal(state.releases.roadmapExists, false);
   assert.ok(!existsSync(roadmapFile));
+  assert.equal(state.work.hasOrigin, true);
+  assert.equal(state.work.delivery, 'pr', 'auto delivery with an origin is pull requests');
 
   await edit({ op: 'create' });
   assert.equal(onDisk(), '# Roadmap\n\n## 0.4.0\n\n## Backlog\n', 'the starter plans the next minor version');
+  assert.equal(readFileSync(join(dirname(roadmapFile), '.gitignore'), 'utf8'), '*\n', '.cockpit/ keeps itself out of git');
+  assert.equal(git(workspace, 'status', '--porcelain'), '', 'the board leaves the checkout clean');
   assert.deepEqual(lanes().map((l) => l.version), ['0.4.0', 'Backlog']);
 
   await edit({ op: 'add', lane: '0.4.0', text: 'Gift cards' });
@@ -105,6 +110,13 @@ export async function run(): Promise<void> {
   await waitFor('the board follows a change made in the editor', () => lanes().length === 2, 10_000);
 
   await publishing(api, workspace);
+
+  // A project from before 0.3.0: with no .cockpit/roadmap.md, the ROADMAP.md at the root is the board.
+  rmSync(roadmapFile);
+  writeFileSync(join(workspace, 'ROADMAP.md'), '# Roadmap\n\n## 0.6.0\n\n- [ ] Legacy card\n');
+  await api.receive({ type: 'refresh' });
+  await waitFor('the board is ROADMAP.md again', () => api.state()?.releases.roadmapName === 'ROADMAP.md' && card('Legacy card') !== undefined, 10_000);
+  assert.equal(api.state()?.releases.roadmapPath, join(dirname(dirname(roadmapFile)), 'ROADMAP.md'));
 
   // Maximize runs VS Code's own layout commands, which must exist in this VS Code, and changes no setting.
   const commands = await vscode.commands.getCommands(true);

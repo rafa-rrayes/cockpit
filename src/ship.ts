@@ -1,7 +1,10 @@
 // Ship, Release, Tag and Pull: the git and gh commands behind them, without `vscode`, so the tests run them against a
 // real repository with a bare remote. Every gh call goes through the `Gh` function passed in, which the tests
 // replace. Each step says what it did; when one stops, the outcome says why and what was left behind.
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+// Two deliveries: `pr` pushes branches and opens pull requests on GitHub (the release too, from a temporary
+// worktree); `direct` merges into the default branch in the main checkout and releases with a commit and a tag
+// there, pushing only when asked.
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { type RunResult, runGit } from './data/git';
@@ -68,89 +71,91 @@ export async function remoteProblem(repoRoot: string): Promise<string | undefine
 // Only the base branch: no tags come along (a fetch follows tags by default), so nothing else in the repository changes.
 const fetchBase = (dir: string, base: string) => git(dir, ['fetch', '--quiet', '--no-tags', REMOTE, `refs/heads/${base}:refs/remotes/${REMOTE}/${base}`], NETWORK_MS);
 
-/** The tag exists here or on the remote: either way, it is not to be made again. */
-async function tagTaken(repoRoot: string, tag: string): Promise<string | undefined> {
+/** The tag exists here or on the remote (when `remote`): either way, it is not to be made again. */
+async function tagTaken(repoRoot: string, tag: string, remote = true): Promise<string | undefined> {
   if ((await git(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/tags/${tag}`])).ok) return `${tag} is already tagged in this repository.`;
-  const remote = await git(repoRoot, ['ls-remote', '--tags', REMOTE, `refs/tags/${tag}`], NETWORK_MS);
-  if (!remote.ok) return `Could not ask ${REMOTE} for its tags: ${why(remote)}`;
-  return remote.stdout.trim() ? `${tag} is already tagged on ${REMOTE}.` : undefined;
+  if (!remote) return undefined;
+  const found = await git(repoRoot, ['ls-remote', '--tags', REMOTE, `refs/tags/${tag}`], NETWORK_MS);
+  if (!found.ok) return `Could not ask ${REMOTE} for its tags: ${why(found)}`;
+  return found.stdout.trim() ? `${tag} is already tagged on ${REMOTE}.` : undefined;
+}
+
+/** The main checkout is on `base`: a direct merge or release happens there. */
+async function onBase(repoRoot: string, base: string): Promise<string | undefined> {
+  const head = await git(repoRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  return head.ok && head.stdout.trim() === base ? undefined : `The main checkout (${repoRoot}) is not on ${base}: switch it to ${base} first.`;
+}
+
+/** git tracks the file at `path` (from the root): a direct release then commits the board with it. */
+export async function isTracked(repoRoot: string, path: string): Promise<boolean> {
+  return (await git(repoRoot, ['ls-files', '--error-unmatch', '--', path])).ok;
 }
 
 // ───────────────────────────── Ship ─────────────────────────────
 
-/** ROADMAP.md as the remote's base branch has it, fetched first (as last fetched when the fetch fails): what a
- *  pull request into it changes the board from. Undefined when it has no ROADMAP.md. */
-export async function baseRoadmap(dir: string, base: string): Promise<string | undefined> {
-  await fetchBase(dir, base);
-  const r = await git(dir, ['show', `refs/remotes/${REMOTE}/${base}:ROADMAP.md`]);
-  return r.ok ? r.stdout : undefined;
-}
-
 export interface ShipPlan {
-  /** The branch's worktree: where its commits are made and pushed from. */
-  worktree: string;
+  repoRoot: string;
+  /** Where the branch is checked out, when it is: it must still be on the branch there, with nothing uncommitted. */
+  worktree?: string;
   branch: string;
   base: string;
-  /** What ROADMAP.md (at the root) is to read on the branch; undefined leaves it alone. */
-  roadmap?: string;
-  commitMessage: string;
   title: string;
   body: string;
 }
 
-/** Commits ROADMAP.md on the branch (merging the base in first when the base's ROADMAP.md changed since the branch
- *  started, so the pull request merges cleanly), pushes the branch and opens its pull request. */
+/** `pr` delivery: pushes the branch and opens its pull request. The board is not part of it: Cockpit never commits
+ *  the board on a branch. */
 export async function shipBranch(plan: ShipPlan, gh: Gh): Promise<Outcome> {
   const { worktree: wt, branch, base } = plan;
+  const dir = wt ?? plan.repoRoot;
   const done: string[] = [];
-  const head = await git(wt, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
-  if (!head.ok || head.stdout.trim() !== branch) return stop(done, `The worktree ${wt} is no longer on ${branch}.`);
-  const status = await git(wt, ['status', '--porcelain']);
-  if (!status.ok) return stop(done, `git status failed in ${wt}: ${why(status)}`);
-  if (status.stdout.trim()) return stop(done, `${branch} has uncommitted changes in its worktree: commit them, or resume its Claude, before shipping.`);
-  const fetched = await fetchBase(wt, base);
-  if (!fetched.ok) return stop(done, `Could not fetch ${base} from ${REMOTE}: ${why(fetched)}`);
-  const remoteBase = `${REMOTE}/${base}`;
-
-  if (plan.roadmap !== undefined) {
-    const mergeBase = await git(wt, ['merge-base', 'HEAD', remoteBase]);
-    const blob = async (rev: string) => {
-      const r = await git(wt, ['rev-parse', '--verify', '--quiet', `${rev}:ROADMAP.md`]);
-      return r.ok ? r.stdout.trim() : '';
-    };
-    if (!mergeBase.ok || (await blob(mergeBase.stdout.trim())) !== (await blob(remoteBase))) {
-      const merged = await git(wt, ['merge', '--no-edit', remoteBase], 60_000);
-      if (!merged.ok) {
-        const aborted = await git(wt, ['merge', '--abort']);
-        return stop(
-          done,
-          `${remoteBase} changed ROADMAP.md since ${branch} started, and merging it into the branch conflicts (${why(merged)}). ${aborted.ok ? 'The merge was undone; nothing was pushed.' : `The merge could not be undone: ${wt} is mid-merge.`}`,
-        );
-      }
-      done.push(`merged ${remoteBase} into ${branch}`);
-    }
-    await writeFile(join(wt, 'ROADMAP.md'), plan.roadmap, 'utf8');
-    const changed = await git(wt, ['status', '--porcelain', '--', 'ROADMAP.md']);
-    if (changed.stdout.trim()) {
-      const add = await git(wt, ['add', '--', 'ROADMAP.md']);
-      const commit = add.ok ? await git(wt, ['commit', '--quiet', '-m', plan.commitMessage]) : add;
-      if (!commit.ok) {
-        await git(wt, ['checkout', 'HEAD', '--', 'ROADMAP.md']);
-        return stop(done, `Could not commit ROADMAP.md on ${branch}: ${why(commit)}. Nothing was pushed.`);
-      }
-      done.push(`committed ROADMAP.md on ${branch}`);
-    }
+  if (wt !== undefined) {
+    const head = await git(wt, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+    if (!head.ok || head.stdout.trim() !== branch) return stop(done, `The worktree ${wt} is no longer on ${branch}.`);
+    const status = await git(wt, ['status', '--porcelain']);
+    if (!status.ok) return stop(done, `git status failed in ${wt}: ${why(status)}`);
+    if (status.stdout.trim()) return stop(done, `${branch} has uncommitted changes in its worktree: commit them, or resume its Claude, before shipping.`);
   }
 
-  const push = await git(wt, ['push', '--quiet', '--set-upstream', REMOTE, `refs/heads/${branch}:refs/heads/${branch}`], NETWORK_MS);
+  const push = await git(dir, ['push', '--quiet', '--set-upstream', REMOTE, `refs/heads/${branch}:refs/heads/${branch}`], NETWORK_MS);
   if (!push.ok) return stop(done, `Pushing ${branch} to ${REMOTE} failed: ${why(push)}. Nothing was pushed.`);
   done.push(`pushed ${branch} to ${REMOTE}`);
 
-  const pr = await gh(wt, ['pr', 'create', '--base', base, '--head', branch, '--title', plan.title, '--body', plan.body]);
+  const pr = await gh(dir, ['pr', 'create', '--base', base, '--head', branch, '--title', plan.title, '--body', plan.body]);
   if (!pr.ok) return stop(done, `The pull request was not opened: ${why(pr)}. ${branch} is on ${REMOTE}; Ship again, or open the pull request on GitHub.`);
   const url = pr.stdout.trim().split('\n').pop()?.trim() ?? '';
   done.push(`opened ${url || 'the pull request'}`);
   return { ok: true, done, ...(url ? { url } : {}) };
+}
+
+/** `direct` delivery: merges the branch into `base` in the main checkout (a fast-forward when it can be one), then
+ *  pushes `base` to origin when `push`. A merge that fails is undone, so `base` is left as it was. */
+export async function mergeBranch(opts: { repoRoot: string; branch: string; base: string; push: boolean }): Promise<Outcome> {
+  const { repoRoot, branch, base } = opts;
+  const done: string[] = [];
+  const off = await onBase(repoRoot, base);
+  if (off) return stop(done, off);
+  const tip = await git(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}^{commit}`]);
+  if (!tip.ok) return stop(done, `${branch} is not a branch here.`);
+
+  const merged = await git(repoRoot, ['merge', '--no-edit', branch], 60_000);
+  if (!merged.ok) {
+    const conflicts = (await git(repoRoot, ['diff', '--name-only', '--diff-filter=U'])).stdout.split('\n').filter(Boolean);
+    const reason = conflicts.length ? `it conflicts in ${conflicts.join(', ')}` : why(merged);
+    // A merge git refused to start (local changes in the way) left nothing to undo.
+    if (!(await git(repoRoot, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'])).ok) return stop(done, `Merging ${branch} into ${base} failed: ${reason}. Nothing was changed.`);
+    const aborted = await git(repoRoot, ['merge', '--abort']);
+    return stop(done, `Merging ${branch} into ${base} failed: ${reason}. ${aborted.ok ? `The merge was undone: ${base} is as it was.` : `The merge could not be undone: ${repoRoot} is mid-merge.`}`);
+  }
+  const head = await git(repoRoot, ['rev-parse', 'HEAD']);
+  done.push(head.stdout.trim() === tip.stdout.trim() ? `fast-forwarded ${base} to ${branch}` : `merged ${branch} into ${base}`);
+
+  if (opts.push) {
+    const pushed = await git(repoRoot, ['push', '--quiet', REMOTE, `refs/heads/${base}:refs/heads/${base}`], NETWORK_MS);
+    if (!pushed.ok) return stop(done, `Pushing ${base} to ${REMOTE} failed: ${why(pushed)}. The merge is in your local ${base} only.`);
+    done.push(`pushed ${base} to ${REMOTE}`);
+  }
+  return { ok: true, done };
 }
 
 // ───────────────────────────── Release ─────────────────────────────
@@ -168,16 +173,51 @@ export interface ReleaseDraft {
   notes: string[];
 }
 
-/** Works out the release's edits on the up-to-date base, without changing anything: the version in package.json and
- *  `versionFiles`, CHANGELOG.md's Unreleased dated, and `roadmap` (ROADMAP.md as it is to read). */
-export async function draftRelease(opts: {
-  repoRoot: string;
-  base: string;
-  version: string;
-  versionFiles: string[];
-  roadmap?: string;
-  date: string;
-}): Promise<{ ok: true; draft: ReleaseDraft } | { ok: false; error: string }> {
+type Drafted = { ok: true; draft: ReleaseDraft } | { ok: false; error: string };
+
+/** The release's edits, from files as `read` gives them (a path from the root, undefined when there is no such file):
+ *  the version in package.json and `versionFiles`, and CHANGELOG.md's Unreleased dated. `where` names what was read,
+ *  for the errors. */
+async function releaseFiles(
+  read: (path: string) => Promise<string | undefined>,
+  opts: { version: string; versionFiles: string[]; date: string; where: string },
+): Promise<{ ok: true; files: ReleaseDraft['files']; notes: string[] } | { ok: false; error: string }> {
+  const { version, where } = opts;
+  const fail = (error: string) => ({ ok: false as const, error });
+  // The root package.json when it has a version, and every file the setting names. The current version is
+  // package.json's, else the first named manifest's.
+  const bumps: { path: string; text: string }[] = [];
+  const pkg = await read('package.json');
+  if (pkg !== undefined && versionFrom('package.json', pkg)) bumps.push({ path: 'package.json', text: pkg });
+  for (const path of opts.versionFiles.filter((f) => f !== 'package.json')) {
+    const text = await read(path);
+    if (text === undefined) return fail(`${path} (cockpit.release.versionFiles) is not in ${where}.`);
+    bumps.push({ path, text });
+  }
+  const from = bumps.map((b) => versionFrom(b.path, b.text)).find(Boolean);
+  if (bumps.length && !from) return fail(`Cannot tell the current version from ${bumps.map((b) => b.path).join(', ')}.`);
+  if (from === version) return fail(`The version is ${version} already.`);
+  const files: ReleaseDraft['files'] = [];
+  for (const b of bumps) {
+    const r = bumpVersion(b.path, b.text, from as string, version);
+    if (!r.ok) return fail(r.error);
+    files.push({ path: b.path, text: r.text, change: `${from} → ${version}` });
+  }
+
+  let notes: string[] = [];
+  const changelog = await read('CHANGELOG.md');
+  if (changelog !== undefined) {
+    const r = datedChangelog(changelog, version, opts.date);
+    if (!r.ok) return fail(r.error);
+    notes = parseChangelog(changelog).find((e) => e.version === 'Unreleased')?.lines ?? [];
+    files.push({ path: 'CHANGELOG.md', text: r.text, change: `"## Unreleased" → "## ${version} - ${opts.date}"` });
+  }
+  if (files.length === 0) return fail(`There is nothing to release: no version file or CHANGELOG.md in ${where}.`);
+  return { ok: true, files, notes };
+}
+
+/** `pr` delivery: works out the release's edits on the up-to-date base, without changing anything. */
+export async function draftRelease(opts: { repoRoot: string; base: string; version: string; versionFiles: string[]; date: string }): Promise<Drafted> {
   const { repoRoot, base, version } = opts;
   const branch = releaseBranch(version);
   const fail = (error: string) => ({ ok: false as const, error });
@@ -197,37 +237,68 @@ export async function draftRelease(opts: {
     const r = await git(repoRoot, ['show', `${baseSha}:${path}`]);
     return r.ok ? r.stdout : undefined;
   };
-  // The root package.json when it has a version, and every file the setting names. The current version is
-  // package.json's, else the first named manifest's.
-  const bumps: { path: string; text: string }[] = [];
-  const pkg = await show('package.json');
-  if (pkg !== undefined && versionFrom('package.json', pkg)) bumps.push({ path: 'package.json', text: pkg });
-  for (const path of opts.versionFiles.filter((f) => f !== 'package.json')) {
-    const text = await show(path);
-    if (text === undefined) return fail(`${path} (cockpit.release.versionFiles) is not in ${REMOTE}/${base}.`);
-    bumps.push({ path, text });
-  }
-  const from = bumps.map((b) => versionFrom(b.path, b.text)).find(Boolean);
-  if (bumps.length && !from) return fail(`Cannot tell the current version from ${bumps.map((b) => b.path).join(', ')}.`);
-  if (from === version) return fail(`The version is ${version} already.`);
-  const files: ReleaseDraft['files'] = [];
-  for (const b of bumps) {
-    const r = bumpVersion(b.path, b.text, from as string, version);
-    if (!r.ok) return fail(r.error);
-    files.push({ path: b.path, text: r.text, change: `${from} → ${version}` });
-  }
+  const made = await releaseFiles(show, { ...opts, where: `${REMOTE}/${base}` });
+  if (!made.ok) return made;
+  return { ok: true, draft: { repoRoot, base, version, branch, baseSha, files: made.files, notes: made.notes } };
+}
 
-  let notes: string[] = [];
-  const changelog = await show('CHANGELOG.md');
-  if (changelog !== undefined) {
-    const r = datedChangelog(changelog, version, opts.date);
-    if (!r.ok) return fail(r.error);
-    notes = parseChangelog(changelog).find((e) => e.version === 'Unreleased')?.lines ?? [];
-    files.push({ path: 'CHANGELOG.md', text: r.text, change: `"## Unreleased" → "## ${version} - ${opts.date}"` });
+/** `direct` delivery: works out the release's edits on the main checkout's files, which must be on `base`, without
+ *  changing anything. A file it changes may not have uncommitted changes: the release commit holds its edits only.
+ *  `remote`: the tag is also checked to be free on origin. */
+export async function draftDirect(opts: { repoRoot: string; base: string; version: string; versionFiles: string[]; date: string; remote: boolean }): Promise<Drafted> {
+  const { repoRoot, base, version } = opts;
+  const fail = (error: string) => ({ ok: false as const, error });
+  const off = await onBase(repoRoot, base);
+  if (off) return fail(off);
+  const taken = await tagTaken(repoRoot, tagName(version), opts.remote);
+  if (taken) return fail(taken);
+  const sha = await git(repoRoot, ['rev-parse', '--verify', 'HEAD^{commit}']);
+  if (!sha.ok) return fail(`${base} has no commit to release.`);
+  const made = await releaseFiles((path) => readFile(join(repoRoot, path), 'utf8').catch(() => undefined), { ...opts, where: 'the main checkout' });
+  if (!made.ok) return made;
+  const paths = made.files.map((f) => f.path);
+  const status = await git(repoRoot, ['status', '--porcelain', '--', ...paths]);
+  if (!status.ok) return fail(`git status failed in ${repoRoot}: ${why(status)}`);
+  const dirty = status.stdout.split('\n').filter(Boolean).map((l) => l.slice(3));
+  if (dirty.length) return fail(`${dirty.join(', ')} ${dirty.length === 1 ? 'has' : 'have'} uncommitted changes: commit them first. The release commit holds its own edits only.`);
+  return { ok: true, draft: { repoRoot, base, version, branch: releaseBranch(version), baseSha: sha.stdout.trim(), files: made.files, notes: made.notes } };
+}
+
+/** `direct` delivery: writes the draft's files, commits only them as "Release X" on `base` in the main checkout, tags
+ *  that commit vX (annotated), and pushes both at once when `push`. `roadmap` (the board's path from the root and its
+ *  new text) is written and committed with them: pass it only when git tracks the board. A commit that fails puts
+ *  every file back as it was. */
+export async function commitRelease(draft: ReleaseDraft, opts: { roadmap?: { path: string; text: string }; push: boolean }): Promise<Outcome> {
+  const { repoRoot, base, version } = draft;
+  const done: string[] = [];
+  const off = await onBase(repoRoot, base);
+  if (off) return stop(done, off);
+  const head = await git(repoRoot, ['rev-parse', 'HEAD']);
+  if (!head.ok || head.stdout.trim() !== draft.baseSha) return stop(done, `${base} moved since the release was prepared: release again.`);
+
+  const files = [...draft.files, ...(opts.roadmap ? [opts.roadmap] : [])];
+  const paths = files.map((f) => f.path);
+  const before = await Promise.all(paths.map((p) => readFile(join(repoRoot, p), 'utf8').catch(() => undefined)));
+  for (const f of files) await writeFile(join(repoRoot, f.path), f.text, 'utf8');
+  const title = releaseTitle(version);
+  const commit = await git(repoRoot, ['commit', '--quiet', '-m', title, '--', ...paths]);
+  if (!commit.ok) {
+    await Promise.all(paths.map((p, i) => (before[i] === undefined ? undefined : writeFile(join(repoRoot, p), before[i] as string, 'utf8'))));
+    return stop(done, `Could not commit the release: ${why(commit)}. The files are as they were.`);
   }
-  if (opts.roadmap !== undefined) files.push({ path: 'ROADMAP.md', text: opts.roadmap, change: `${version}: Status: shipped` });
-  if (files.length === 0) return fail(`There is nothing to release: no version file, CHANGELOG.md or ROADMAP.md in ${REMOTE}/${base}.`);
-  return { ok: true, draft: { repoRoot, base, version, branch, baseSha, files, notes } };
+  done.push(`committed ${paths.join(', ')} on ${base} as "${title}"`);
+
+  const tag = tagName(version);
+  const tagged = await git(repoRoot, ['tag', '-a', '-m', title, tag, 'HEAD']);
+  if (!tagged.ok) return stop(done, `Could not tag the release commit ${tag}: ${why(tagged)}. The commit stays on ${base}.`);
+  done.push(`tagged it ${tag}`);
+
+  if (opts.push) {
+    const pushed = await git(repoRoot, ['push', '--quiet', '--atomic', REMOTE, `refs/heads/${base}:refs/heads/${base}`, `refs/tags/${tag}`], NETWORK_MS);
+    if (!pushed.ok) return stop(done, `Pushing ${base} and ${tag} to ${REMOTE} failed: ${why(pushed)}. Neither was pushed; both are here.`);
+    done.push(`pushed ${base} and ${tag} to ${REMOTE}`);
+  }
+  return { ok: true, done };
 }
 
 /** Commits the draft on a new branch from its base commit, in a temporary worktree (the main checkout is not
@@ -283,19 +354,30 @@ export async function findRelease(gh: Gh, repoRoot: string, base: string, versio
   return { ok: true, sha: merged.mergeCommit, pr: merged.number };
 }
 
+/** `direct` delivery: the commit a shipped lane's tag goes on, the default branch's tip, and the tag still free
+ *  (here, and on origin when `remote`). */
+export async function findDirectTag(repoRoot: string, base: string, version: string, remote: boolean): Promise<{ ok: true; sha: string } | { ok: false; error: string }> {
+  const tip = await git(repoRoot, ['rev-parse', '--verify', '--quiet', `refs/heads/${base}^{commit}`]);
+  if (!tip.ok) return { ok: false, error: `There is no local ${base} to tag.` };
+  const taken = await tagTaken(repoRoot, tagName(version), remote);
+  if (taken) return { ok: false, error: taken };
+  return { ok: true, sha: tip.stdout.trim() };
+}
+
 /** Tags `sha` with an annotated tag (a tagger, a date and the message "Release X", which `git describe` and
- *  `git push --follow-tags` go by) and pushes it; a tag that could not be pushed is deleted again, so nothing is left
- *  half-made. Git needs a name and email to tag with, as it does to commit. */
-export async function pushTag(repoRoot: string, version: string, sha: string): Promise<Outcome> {
+ *  `git push --follow-tags` go by) and, when `push`, pushes it; a tag that could not be pushed is deleted again, so
+ *  nothing is left half-made. Git needs a name and email to tag with, as it does to commit. */
+export async function pushTag(repoRoot: string, version: string, sha: string, push = true): Promise<Outcome> {
   const tag = tagName(version);
   const done: string[] = [];
   const made = await git(repoRoot, ['tag', '-a', '-m', releaseTitle(version), tag, sha]);
   if (!made.ok) return stop(done, `Could not tag ${sha.slice(0, 7)}: ${why(made)}`);
   done.push(`tagged ${sha.slice(0, 7)} ${tag}`);
-  const push = await git(repoRoot, ['push', '--quiet', REMOTE, `refs/tags/${tag}`], NETWORK_MS);
-  if (!push.ok) {
+  if (!push) return { ok: true, done };
+  const pushed = await git(repoRoot, ['push', '--quiet', REMOTE, `refs/tags/${tag}`], NETWORK_MS);
+  if (!pushed.ok) {
     const removed = await git(repoRoot, ['tag', '-d', tag]);
-    return stop(done, `Pushing ${tag} failed: ${why(push)}. ${removed.ok ? 'The local tag was deleted again.' : `The local tag ${tag} is still there.`}`);
+    return stop(done, `Pushing ${tag} failed: ${why(pushed)}. ${removed.ok ? 'The local tag was deleted again.' : `The local tag ${tag} is still there.`}`);
   }
   done.push(`pushed ${tag} to ${REMOTE}`);
   return { ok: true, done };

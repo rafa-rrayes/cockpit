@@ -1,15 +1,17 @@
-// Ship, Release, Tag and Pull end to end against a real repository whose remote is a local bare one, with a second
-// clone standing in for GitHub's merge button. gh is replaced by a function that records what it was asked and
-// answers like gh does; nothing leaves the machine.
+// Ship, Release, Tag and Pull end to end against real repositories. For `pr` delivery the remote is a local bare
+// one, with a second clone standing in for GitHub's merge button; gh is replaced by a function that records what it
+// was asked and answers like gh does. For `direct` delivery, repositories with no remote, and one with a local bare
+// origin to push to. Nothing leaves the machine.
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { applyRoadmapEdit, boardChanges, finishBranch, finishMerged, linkCard, parseRoadmap, setLaneStatus } from '../src/data/roadmap';
+import { ensureCockpitDir } from '../src/data/cockpitDir';
+import { finishMerged, linkCard, parseRoadmap, setLaneStatus } from '../src/data/roadmap';
 import type { RunResult } from '../src/data/git';
-import { prBody, prTitle, releaseBody, releaseTitle, roadmapCommitMessage } from '../src/publish';
-import { baseRoadmap, draftRelease, findRelease, type Gh, openRelease, prsFrom, pullDefault, pushTag, shipBranch } from '../src/ship';
+import { prBody, prTitle, releaseBody, releaseTitle } from '../src/publish';
+import { commitRelease, draftDirect, draftRelease, findDirectTag, findRelease, type Gh, isTracked, mergeBranch, openRelease, prsFrom, pullDefault, pushTag, shipBranch } from '../src/ship';
 
 const ok = (stdout: string): RunResult => ({ ok: true, stdout, stderr: '', timedOut: false });
 const failed = (stderr: string): RunResult => ({ ok: false, stdout: '', stderr, code: 1, timedOut: false });
@@ -36,10 +38,12 @@ const configure = (dir: string) => {
   sh(dir, ['config', 'user.email', 'test@example.com']);
   sh(dir, ['config', 'commit.gpgsign', 'false']);
   sh(dir, ['config', 'tag.gpgsign', 'false']);
+  // Cockpit's own git runs read the repository's config: no hook of the machine's runs in the tests.
+  sh(dir, ['config', 'core.hooksPath', '/dev/null']);
 };
 const read = (path: string) => readFileSync(path, 'utf8');
 const status = (dir: string) => sh(dir, ['status', '--porcelain']).trim();
-const wt = (name: string) => join(repo, '.claude', 'worktrees', name);
+const wt = (name: string, root = repo) => join(root, '.claude', 'worktrees', name);
 /** The GitHub side: merges a branch of the remote into main and pushes, as the merge button would. */
 const merge = (branch: string, how: 'squash' | 'merge'): string => {
   sh(hub, ['fetch', '--quiet', 'origin']);
@@ -57,24 +61,42 @@ const change = (r: { ok: true; text: string } | { ok: false; error: string }) =>
   if (!r.ok) throw new Error(r.error);
   return r.text;
 };
+const INITIAL_ROADMAP = '# Roadmap\n\n## 0.2.0\n\n- [ ] Card A\n- [ ] Card B\n\n## Backlog\n\n- [ ] Idea\n';
+const CHANGELOG = '# Changelog\n\n## Unreleased\n\n- Card A\n- Card B\n\n## 0.1.0 - 2026-11-01\n\n- First\n';
+
+/** A repository with package.json at 0.1.0, a changelog, app.txt and, when given, a tracked ROADMAP.md. */
+function makeRepo(dir: string, roadmap?: string): void {
+  mkdirSync(dir);
+  sh(dir, ['init', '--quiet', '-b', 'main']);
+  configure(dir);
+  writeFileSync(join(dir, '.gitignore'), '.claude/\n');
+  if (roadmap !== undefined) writeFileSync(join(dir, 'ROADMAP.md'), roadmap);
+  writeFileSync(join(dir, 'package.json'), '{\n  "name": "app",\n  "version": "0.1.0",\n  "scripts": { "test": "true" }\n}\n');
+  writeFileSync(join(dir, 'CHANGELOG.md'), CHANGELOG);
+  writeFileSync(join(dir, 'app.txt'), 'app\n');
+  sh(dir, ['add', '.']);
+  sh(dir, ['commit', '--quiet', '-m', 'init']);
+}
+
+/** A branch in a worktree of its own with one commit writing `file`. */
+function branchWith(root: string, branch: string, file: string, text: string, from = 'main'): void {
+  const dir = wt(branch, root);
+  sh(root, ['worktree', 'add', '--quiet', '-b', branch, dir, from]);
+  writeFileSync(join(dir, file), text);
+  sh(dir, ['add', file]);
+  sh(dir, ['commit', '--quiet', '-m', `${branch} work`]);
+}
 
 beforeAll(() => {
   base = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-ship-')));
   repo = join(base, 'repo');
   hub = join(base, 'hub');
   sh(base, ['init', '--quiet', '--bare', '-b', 'main', 'origin.git']);
-  mkdirSync(repo);
-  sh(repo, ['init', '--quiet', '-b', 'main']);
-  configure(repo);
-  writeFileSync(join(repo, '.gitignore'), '.claude/\n');
-  writeFileSync(join(repo, 'ROADMAP.md'), '# Roadmap\n\n## 0.2.0\n\n- [ ] Card A\n- [ ] Card B\n\n## Backlog\n\n- [ ] Idea\n');
-  writeFileSync(join(repo, 'package.json'), '{\n  "name": "app",\n  "version": "0.1.0",\n  "scripts": { "test": "true" }\n}\n');
+  makeRepo(repo, INITIAL_ROADMAP);
   mkdirSync(join(repo, 'app'));
   writeFileSync(join(repo, 'app', 'version.txt'), 'version 0.1.0\n');
-  writeFileSync(join(repo, 'CHANGELOG.md'), '# Changelog\n\n## Unreleased\n\n- Card A\n- Card B\n\n## 0.1.0 - 2026-11-01\n\n- First\n');
-  writeFileSync(join(repo, 'app.txt'), 'app\n');
   sh(repo, ['add', '.']);
-  sh(repo, ['commit', '--quiet', '-m', 'init']);
+  sh(repo, ['commit', '--quiet', '-m', 'version file']);
   sh(repo, ['remote', 'add', 'origin', join(base, 'origin.git')]);
   sh(repo, ['push', '--quiet', '-u', 'origin', 'main']);
   sh(repo, ['remote', 'set-head', 'origin', 'main']);
@@ -84,70 +106,50 @@ beforeAll(() => {
 
 afterAll(() => rmSync(base, { recursive: true, force: true }));
 
-describe('Ship: the roadmap travels in the pull request', () => {
-  it('ships two branches started together; each merges cleanly and the pull after it leaves ROADMAP.md clean', async () => {
+describe('Ship (pr): the branch goes out on its own, the board stays home', () => {
+  it('pushes the branch and opens its pull request without committing the board; Pull then finishes its cards', async () => {
     const A = 'worktree-0.2.0-card-a';
-    const B = 'worktree-0.2.0-card-b';
     sh(repo, ['worktree', 'add', '--quiet', '-b', A, wt('a'), 'main']);
-    sh(repo, ['worktree', 'add', '--quiet', '-b', B, wt('b'), 'main']);
-    // Start Claude linked both cards in the main checkout's working file, which stays uncommitted.
-    let text = read(roadmapPath());
-    text = change(linkCard(text, idOf(text, 'Card A'), A, 'doing'));
-    text = change(linkCard(text, idOf(text, 'Card B'), B, 'doing'));
-    text = change(applyRoadmapEdit(text, { op: 'addRelease', version: '0.3.0' }));
+    // Start Claude linked the card in the main checkout's board, which stays uncommitted.
+    let text = change(linkCard(read(roadmapPath()), idOf(read(roadmapPath()), 'Card A'), A, 'doing'));
     writeFileSync(roadmapPath(), text);
     writeFileSync(join(wt('a'), 'app.txt'), 'app\nA\n');
     sh(wt('a'), ['commit', '--quiet', '-am', 'A work']);
-    writeFileSync(join(wt('b'), 'b.txt'), 'B\n');
-    sh(wt('b'), ['add', 'b.txt']);
-    sh(wt('b'), ['commit', '--quiet', '-m', 'B work']);
 
-    // Ship A.
-    const cardsA = [{ text: 'Card A', lane: '0.2.0' }];
-    const planA = { worktree: wt('a'), branch: A, base: 'main', roadmap: finishBranch(text, A), commitMessage: roadmapCommitMessage(cardsA), title: prTitle(cardsA, 'A work'), body: prBody(cardsA, 'Did A.\n\nStill open:\n- a token') };
-    const ghA = fakeGh();
-    const shipped = await shipBranch(planA, ghA.gh);
-    expect(shipped).toEqual({ ok: true, done: [`committed ROADMAP.md on ${A}`, `pushed ${A} to origin`, 'opened https://github.com/o/r/pull/1'], url: 'https://github.com/o/r/pull/1' });
-    expect(ghA.calls).toEqual([['pr', 'create', '--base', 'main', '--head', A, '--title', 'Card A', '--body', 'Roadmap:\n\n- [x] Card A (0.2.0)\n\n## Report\n\nDid A.\n\nStill open:\n- a token']]);
-    expect(sh(repo, ['show', `origin/${A}:ROADMAP.md`])).toBe(planA.roadmap);
-    expect(sh(repo, ['log', '-1', '--format=%s', `origin/${A}`]).trim()).toBe('Roadmap: Card A done');
-    // While the pull request is open, main's working file keeps the card in progress with its link.
+    const cards = [{ text: 'Card A', lane: '0.2.0' }];
+    const { gh, calls } = fakeGh();
+    const shipped = await shipBranch({ repoRoot: repo, worktree: wt('a'), branch: A, base: 'main', title: prTitle(cards, 'A work'), body: prBody(cards, 'Did A.') }, gh);
+    expect(shipped).toEqual({ ok: true, done: [`pushed ${A} to origin`, 'opened https://github.com/o/r/pull/1'], url: 'https://github.com/o/r/pull/1' });
+    expect(calls).toEqual([['pr', 'create', '--base', 'main', '--head', A, '--title', 'Card A', '--body', 'Roadmap:\n\n- [x] Card A (0.2.0)\n\n## Report\n\nDid A.']]);
+    // The branch carries its own commit only: the board on it is the one it started from.
+    expect(sh(repo, ['log', '--format=%s', `origin/main..origin/${A}`]).trim()).toBe('A work');
+    expect(sh(repo, ['show', `origin/${A}:ROADMAP.md`])).toBe(INITIAL_ROADMAP);
     expect(read(roadmapPath())).toBe(text);
 
-    // GitHub squash-merges A. Until Pull, main's working file stays as it was (the board only shows A's cards done);
-    // Pull first finishes A's cards in it, then pulls.
+    // GitHub squash-merges A; Pull finishes its cards in the board, then pulls. The board stays a local edit.
     merge(A, 'squash');
-    expect(read(roadmapPath())).toBe(text);
     text = finishMerged(read(roadmapPath()), { branches: [A], versions: [] });
     writeFileSync(roadmapPath(), text);
     expect(await pullDefault(repo)).toEqual({ ok: true, done: ['pulled'] });
-    expect(status(repo)).toBe('');
+    expect(read(join(repo, 'app.txt'))).toBe('app\nA\n');
+    expect(status(repo)).toBe('M ROADMAP.md');
+    expect(parseRoadmap(read(roadmapPath()))[0]?.items.map((i) => `${i.status}:${i.text}:${i.branch ?? ''}`)).toEqual(['done:Card A:', 'todo:Card B:']);
+    sh(repo, ['checkout', '--', 'ROADMAP.md']);
+  });
 
-    // A board edit while B works, then Ship B: main's ROADMAP.md moved since B started, so B merges main first.
-    text = change(applyRoadmapEdit(read(roadmapPath()), { op: 'add', lane: 'Backlog', text: 'Later idea' }));
-    writeFileSync(roadmapPath(), text);
-    const cardsB = [{ text: 'Card B', lane: '0.2.0' }];
-    // What Ship's confirmation lists besides B's own card: the board edit, against main on the remote.
-    expect(boardChanges((await baseRoadmap(repo, 'main')) ?? '', finishBranch(text, B), ['Card B'])).toEqual(['added "Later idea" (Backlog, planned)']);
-    const shippedB = await shipBranch({ worktree: wt('b'), branch: B, base: 'main', roadmap: finishBranch(text, B), commitMessage: roadmapCommitMessage(cardsB), title: prTitle(cardsB, ''), body: prBody(cardsB, undefined) }, fakeGh().gh);
-    expect(shippedB.done).toEqual([`merged origin/main into ${B}`, `committed ROADMAP.md on ${B}`, `pushed ${B} to origin`, 'opened https://github.com/o/r/pull/1']);
-    merge(B, 'merge');
-    writeFileSync(roadmapPath(), finishMerged(read(roadmapPath()), { branches: [B], versions: [] }));
-    expect((await pullDefault(repo)).ok).toBe(true);
-    expect(status(repo)).toBe('');
-    expect(parseRoadmap(read(roadmapPath())).map((l) => [l.version, ...l.items.map((i) => `${i.status}:${i.text}:${i.branch ?? ''}`)])).toEqual([
-      ['0.2.0', 'done:Card A:', 'done:Card B:'],
-      ['0.3.0'],
-      ['Backlog', 'todo:Idea:', 'todo:Later idea:'],
-    ]);
-    expect(await pullDefault(repo)).toEqual({ ok: true, done: ['already up to date'] });
+  it('ships a branch that has no worktree, from the main checkout', async () => {
+    branchWith(repo, 'loose', 'loose.txt', 'loose\n');
+    sh(repo, ['worktree', 'remove', wt('loose')]);
+    const out = await shipBranch({ repoRoot: repo, branch: 'loose', base: 'main', title: 'Loose', body: '' }, fakeGh().gh);
+    expect(out).toMatchObject({ ok: true, done: ['pushed loose to origin', 'opened https://github.com/o/r/pull/1'] });
+    expect(sh(repo, ['rev-parse', 'origin/loose']).trim()).toBe(sh(repo, ['rev-parse', 'loose']).trim());
   });
 
   it('refuses a dirty worktree, and says what it left when the push or the pull request fails', async () => {
     const C = 'worktree-backlog-idea';
     sh(repo, ['worktree', 'add', '--quiet', '-b', C, wt('c'), 'main']);
     writeFileSync(join(wt('c'), 'c.txt'), 'C\n');
-    const plan = { worktree: wt('c'), branch: C, base: 'main', commitMessage: 'Roadmap: Idea done', title: 'Idea', body: '' };
+    const plan = { repoRoot: repo, worktree: wt('c'), branch: C, base: 'main', title: 'Idea', body: '' };
     const dirty = await shipBranch(plan, fakeGh().gh);
     expect(dirty).toMatchObject({ ok: false, done: [] });
     expect(dirty.error).toContain('uncommitted changes');
@@ -155,12 +157,11 @@ describe('Ship: the roadmap travels in the pull request', () => {
     sh(wt('c'), ['commit', '--quiet', '-m', 'C work']);
     expect((await shipBranch({ ...plan, branch: 'other' }, fakeGh().gh)).error).toContain('no longer on other');
 
-    const roadmap = finishBranch(read(roadmapPath()), C);
     sh(repo, ['remote', 'set-url', 'origin', join(base, 'nowhere.git')]);
-    const noPush = await shipBranch({ ...plan, roadmap }, fakeGh().gh);
-    expect(noPush.ok).toBe(false);
-    expect(noPush.error).toContain('Could not fetch main');
+    const noPush = await shipBranch(plan, fakeGh().gh);
     sh(repo, ['remote', 'set-url', 'origin', join(base, 'origin.git')]);
+    expect(noPush).toMatchObject({ ok: false, done: [] });
+    expect(noPush.error).toMatch(new RegExp(`^Pushing ${C} to origin failed: .*Nothing was pushed\\.$`));
 
     const noPr = await shipBranch(plan, fakeGh({}, failed('GraphQL: No commits between main and x')).gh);
     expect(noPr).toMatchObject({ ok: false, done: [`pushed ${C} to origin`] });
@@ -178,33 +179,32 @@ describe('Ship: the roadmap travels in the pull request', () => {
   });
 });
 
-describe('Release and Tag', () => {
-  it('prepares the release pull request in a temporary worktree, then tags what merged', async () => {
+describe('Release and Tag (pr)', () => {
+  it('prepares the release pull request in a temporary worktree, without the board, then tags what merged', async () => {
     const head = sh(repo, ['rev-parse', 'HEAD']).trim();
-    const working = read(roadmapPath());
-    const roadmap = change(setLaneStatus(working, '0.2.0', 'shipped'));
-    const drafted = await draftRelease({ repoRoot: repo, base: 'main', version: '0.2.0', versionFiles: ['app/version.txt'], roadmap, date: '2026-11-14' });
+    const drafted = await draftRelease({ repoRoot: repo, base: 'main', version: '0.2.0', versionFiles: ['app/version.txt'], date: '2026-11-14' });
     if (!drafted.ok) throw new Error(drafted.error);
     const files = Object.fromEntries(drafted.draft.files.map((f) => [f.path, f.text]));
-    expect(Object.keys(files)).toEqual(['package.json', 'app/version.txt', 'CHANGELOG.md', 'ROADMAP.md']);
+    expect(Object.keys(files)).toEqual(['package.json', 'app/version.txt', 'CHANGELOG.md']);
     expect(files['package.json']).toBe('{\n  "name": "app",\n  "version": "0.2.0",\n  "scripts": { "test": "true" }\n}\n');
     expect(files['app/version.txt']).toBe('version 0.2.0\n');
     expect(files['CHANGELOG.md']).toBe('# Changelog\n\n## Unreleased\n\n## 0.2.0 - 2026-11-14\n\n- Card A\n- Card B\n\n## 0.1.0 - 2026-11-01\n\n- First\n');
     expect(drafted.draft.notes).toEqual(['Card A', 'Card B']);
 
-    const lane = parseRoadmap(roadmap)[0];
+    const lane = parseRoadmap(read(roadmapPath()))[0];
     if (!lane) throw new Error('no lane');
     const title = releaseTitle('0.2.0');
     const body = releaseBody(lane, drafted.draft.notes);
     const { gh, calls } = fakeGh();
     const opened = await openRelease(drafted.draft, title, body, gh);
-    expect(opened).toEqual({ ok: true, done: ['committed package.json, app/version.txt, CHANGELOG.md, ROADMAP.md on release-0.2.0', 'pushed release-0.2.0 to origin', 'opened https://github.com/o/r/pull/1'], url: 'https://github.com/o/r/pull/1' });
-    expect(calls).toEqual([['pr', 'create', '--base', 'main', '--head', 'release-0.2.0', '--title', 'Release 0.2.0', '--body', '## Changelog\n\n- Card A\n- Card B\n\n## Roadmap\n\n- [x] Card A\n- [x] Card B']]);
+    expect(opened).toEqual({ ok: true, done: ['committed package.json, app/version.txt, CHANGELOG.md on release-0.2.0', 'pushed release-0.2.0 to origin', 'opened https://github.com/o/r/pull/1'], url: 'https://github.com/o/r/pull/1' });
+    expect(calls[0]?.slice(0, 7)).toEqual(['pr', 'create', '--base', 'main', '--head', 'release-0.2.0', '--title']);
     // The main checkout is untouched and the temporary worktree is gone.
     expect(sh(repo, ['rev-parse', 'HEAD']).trim()).toBe(head);
-    expect(read(roadmapPath())).toBe(working);
+    expect(status(repo)).toBe('');
     expect(sh(repo, ['worktree', 'list', '--porcelain'])).not.toContain('cockpit-release-');
     expect(sh(repo, ['show', 'origin/release-0.2.0:package.json'])).toContain('"version": "0.2.0"');
+    expect(sh(repo, ['show', 'origin/release-0.2.0:ROADMAP.md'])).toBe(sh(repo, ['show', 'origin/main:ROADMAP.md']));
 
     // Another release of the same version is refused while its branch exists.
     expect(await draftRelease({ repoRoot: repo, base: 'main', version: '0.2.0', versionFiles: [], date: '2026-11-14' })).toMatchObject({ ok: false });
@@ -213,9 +213,6 @@ describe('Release and Tag', () => {
     expect(await findRelease(fakeGh({ 'release-0.2.0': [{ number: 9, state: 'OPEN', url: 'u', mergeCommit: null }] }).gh, repo, 'main', '0.2.0')).toMatchObject({ ok: false });
 
     const sha = merge('release-0.2.0', 'merge');
-    // Pull marks the merged release shipped in main's working file, as the merge has it, then pulls.
-    writeFileSync(roadmapPath(), finishMerged(read(roadmapPath()), { branches: [], versions: ['0.2.0'] }));
-    expect(read(roadmapPath())).toBe(roadmap);
     expect((await pullDefault(repo)).ok).toBe(true);
     expect(status(repo)).toBe('');
 
@@ -261,5 +258,186 @@ describe('pullDefault', () => {
     expect(out).toMatchObject({ ok: false, done: ['pulled'] });
     expect(out.error).toContain('safe in the stash');
     expect(existsSync(join(repo, 'app.txt'))).toBe(true);
+  });
+});
+
+describe('Ship (direct): merged into the default branch in the main checkout', () => {
+  let local: string;
+  const tip = (dir: string, ref = 'HEAD') => sh(dir, ['rev-parse', ref]).trim();
+
+  beforeAll(() => {
+    local = join(base, 'direct');
+    makeRepo(local);
+  });
+
+  it('fast-forwards when it can, else makes a merge commit', async () => {
+    branchWith(local, 'ff', 'ff.txt', 'ff\n');
+    expect(await mergeBranch({ repoRoot: local, branch: 'ff', base: 'main', push: false })).toEqual({ ok: true, done: ['fast-forwarded main to ff'] });
+    expect(tip(local)).toBe(tip(local, 'ff'));
+
+    branchWith(local, 'side', 'side.txt', 'side\n');
+    writeFileSync(join(local, 'main.txt'), 'main\n');
+    sh(local, ['add', 'main.txt']);
+    sh(local, ['commit', '--quiet', '-m', 'on main']);
+    expect(await mergeBranch({ repoRoot: local, branch: 'side', base: 'main', push: false })).toEqual({ ok: true, done: ['merged side into main'] });
+    expect(sh(local, ['log', '-1', '--format=%P']).trim().split(' ')).toHaveLength(2);
+    expect(status(local)).toBe('');
+  });
+
+  it('undoes a merge that conflicts, and leaves alone one git will not start', async () => {
+    branchWith(local, 'clash', 'app.txt', 'app\nfrom the branch\n');
+    writeFileSync(join(local, 'app.txt'), 'app\nfrom main\n');
+    sh(local, ['commit', '--quiet', '-am', 'main edits app']);
+    const before = tip(local);
+    const out = await mergeBranch({ repoRoot: local, branch: 'clash', base: 'main', push: false });
+    expect(out).toEqual({ ok: false, done: [], error: 'Merging clash into main failed: it conflicts in app.txt. The merge was undone: main is as it was.' });
+    expect(tip(local)).toBe(before);
+    expect(status(local)).toBe('');
+
+    // Uncommitted changes in a file the merge touches: git refuses to start, and there is nothing to undo.
+    branchWith(local, 'touch', 'main.txt', 'main\nbranch\n');
+    writeFileSync(join(local, 'main.txt'), 'main\nuncommitted\n');
+    const refused = await mergeBranch({ repoRoot: local, branch: 'touch', base: 'main', push: false });
+    expect(refused).toMatchObject({ ok: false, done: [] });
+    expect(refused.error).toMatch(/^Merging touch into main failed: .*Nothing was changed\.$/);
+    expect(read(join(local, 'main.txt'))).toBe('main\nuncommitted\n');
+    sh(local, ['checkout', '--', 'main.txt']);
+  });
+
+  it('refuses when the main checkout is not on the default branch, or the branch is gone', async () => {
+    sh(local, ['checkout', '--quiet', '-b', 'elsewhere']);
+    expect(await mergeBranch({ repoRoot: local, branch: 'touch', base: 'main', push: false })).toEqual({
+      ok: false,
+      done: [],
+      error: `The main checkout (${local}) is not on main: switch it to main first.`,
+    });
+    sh(local, ['checkout', '--quiet', 'main']);
+    expect(await mergeBranch({ repoRoot: local, branch: 'nope', base: 'main', push: false })).toEqual({ ok: false, done: [], error: 'nope is not a branch here.' });
+  });
+
+  it('pushes the default branch after the merge when asked, and says the merge is local when the push fails', async () => {
+    const pushing = join(base, 'direct-origin');
+    makeRepo(pushing);
+    sh(base, ['init', '--quiet', '--bare', '-b', 'main', 'direct-origin.git']);
+    sh(pushing, ['remote', 'add', 'origin', join(base, 'direct-origin.git')]);
+    sh(pushing, ['push', '--quiet', '-u', 'origin', 'main']);
+    branchWith(pushing, 'feat', 'feat.txt', 'feat\n');
+    expect(await mergeBranch({ repoRoot: pushing, branch: 'feat', base: 'main', push: true })).toEqual({ ok: true, done: ['fast-forwarded main to feat', 'pushed main to origin'] });
+    expect(sh(pushing, ['ls-remote', 'origin', 'refs/heads/main']).split('\t')[0]).toBe(tip(pushing));
+
+    branchWith(pushing, 'feat2', 'feat2.txt', 'feat2\n');
+    sh(pushing, ['remote', 'set-url', 'origin', join(base, 'nowhere.git')]);
+    const out = await mergeBranch({ repoRoot: pushing, branch: 'feat2', base: 'main', push: true });
+    sh(pushing, ['remote', 'set-url', 'origin', join(base, 'direct-origin.git')]);
+    expect(out).toMatchObject({ ok: false, done: ['fast-forwarded main to feat2'] });
+    expect(out.error).toMatch(/^Pushing main to origin failed: .*The merge is in your local main only\.$/);
+  });
+});
+
+describe('Release and Tag (direct): a commit and a tag on the default branch', () => {
+  let local: string;
+  const BOARD = '# Roadmap\n\n## 0.2.0\n\n- [x] Card A\n- [x] Card B\n\n## Backlog\n';
+
+  beforeAll(() => {
+    local = join(base, 'direct-release');
+    makeRepo(local, BOARD);
+  });
+
+  it('commits only its files, the tracked board shipped with them, and tags that commit', async () => {
+    // Work in progress that is not the release's: it stays uncommitted.
+    writeFileSync(join(local, 'app.txt'), 'app\nwork in progress\n');
+    const drafted = await draftDirect({ repoRoot: local, base: 'main', version: '0.2.0', versionFiles: [], date: '2026-11-14', remote: false });
+    if (!drafted.ok) throw new Error(drafted.error);
+    expect(drafted.draft.files.map((f) => [f.path, f.change])).toEqual([
+      ['package.json', '0.1.0 → 0.2.0'],
+      ['CHANGELOG.md', '"## Unreleased" → "## 0.2.0 - 2026-11-14"'],
+    ]);
+    expect(drafted.draft.notes).toEqual(['Card A', 'Card B']);
+    expect(await isTracked(local, 'ROADMAP.md')).toBe(true);
+    const shipped = change(setLaneStatus(read(join(local, 'ROADMAP.md')), '0.2.0', 'shipped'));
+
+    const out = await commitRelease(drafted.draft, { roadmap: { path: 'ROADMAP.md', text: shipped }, push: false });
+    expect(out).toEqual({ ok: true, done: ['committed package.json, CHANGELOG.md, ROADMAP.md on main as "Release 0.2.0"', 'tagged it v0.2.0'] });
+    expect(sh(local, ['log', '-1', '--format=%s']).trim()).toBe('Release 0.2.0');
+    expect(sh(local, ['show', '--name-only', '--format=', 'HEAD']).trim().split('\n').sort()).toEqual(['CHANGELOG.md', 'ROADMAP.md', 'package.json']);
+    expect(sh(local, ['show', 'HEAD:ROADMAP.md'])).toBe(shipped);
+    expect(sh(local, ['cat-file', '-t', 'refs/tags/v0.2.0']).trim()).toBe('tag');
+    expect(sh(local, ['rev-parse', 'v0.2.0^{commit}']).trim()).toBe(sh(local, ['rev-parse', 'HEAD']).trim());
+    expect(status(local)).toBe('M app.txt');
+    sh(local, ['checkout', '--', 'app.txt']);
+
+    // The tag is taken now.
+    expect(await draftDirect({ repoRoot: local, base: 'main', version: '0.2.0', versionFiles: [], date: '2026-11-14', remote: false })).toEqual({ ok: false, error: 'v0.2.0 is already tagged in this repository.' });
+  });
+
+  it('refuses a file it changes that has uncommitted changes, and puts the files back when the commit fails', async () => {
+    writeFileSync(join(local, 'CHANGELOG.md'), `${read(join(local, 'CHANGELOG.md'))}\n- typed by hand\n`);
+    expect(await draftDirect({ repoRoot: local, base: 'main', version: '0.3.0', versionFiles: [], date: '2026-11-14', remote: false })).toEqual({
+      ok: false,
+      error: 'CHANGELOG.md has uncommitted changes: commit them first. The release commit holds its own edits only.',
+    });
+    sh(local, ['checkout', '--', 'CHANGELOG.md']);
+
+    const drafted = await draftDirect({ repoRoot: local, base: 'main', version: '0.3.0', versionFiles: [], date: '2026-11-14', remote: false });
+    if (!drafted.ok) throw new Error(drafted.error);
+    const hooks = join(base, 'failing-hooks');
+    mkdirSync(hooks);
+    writeFileSync(join(hooks, 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    sh(local, ['config', 'core.hooksPath', hooks]);
+    const pkg = read(join(local, 'package.json'));
+    const out = await commitRelease(drafted.draft, { push: false });
+    sh(local, ['config', 'core.hooksPath', '/dev/null']);
+    expect(out).toMatchObject({ ok: false, done: [] });
+    expect(out.error).toMatch(/^Could not commit the release: .*The files are as they were\.$/);
+    expect(read(join(local, 'package.json'))).toBe(pkg);
+    expect(status(local)).toBe('');
+    expect(sh(local, ['tag', '--list', 'v0.3.0']).trim()).toBe('');
+  });
+
+  it('leaves an untracked board out of the commit, and refuses a release whose base moved', async () => {
+    await ensureCockpitDir(local);
+    writeFileSync(join(local, '.cockpit', 'roadmap.md'), '## 0.3.0\n\n- [x] C\n');
+    expect(await isTracked(local, '.cockpit/roadmap.md')).toBe(false);
+    expect(status(local)).toBe('');
+
+    const drafted = await draftDirect({ repoRoot: local, base: 'main', version: '0.3.0', versionFiles: [], date: '2026-11-15', remote: false });
+    if (!drafted.ok) throw new Error(drafted.error);
+    writeFileSync(join(local, 'later.txt'), 'later\n');
+    sh(local, ['add', 'later.txt']);
+    sh(local, ['commit', '--quiet', '-m', 'later']);
+    expect(await commitRelease(drafted.draft, { push: false })).toEqual({ ok: false, done: [], error: 'main moved since the release was prepared: release again.' });
+
+    const again = await draftDirect({ repoRoot: local, base: 'main', version: '0.3.0', versionFiles: [], date: '2026-11-15', remote: false });
+    if (!again.ok) throw new Error(again.error);
+    expect(await commitRelease(again.draft, { push: false })).toEqual({ ok: true, done: ['committed package.json, CHANGELOG.md on main as "Release 0.3.0"', 'tagged it v0.3.0'] });
+    expect(read(join(local, '.cockpit', 'roadmap.md'))).toBe('## 0.3.0\n\n- [x] C\n');
+  });
+
+  it('tags the default branch tip for a shipped lane, here only or pushed too', async () => {
+    const found = await findDirectTag(local, 'main', '0.3.1', false);
+    expect(found).toEqual({ ok: true, sha: sh(local, ['rev-parse', 'main']).trim() });
+    if (!found.ok) return;
+    expect(await pushTag(local, '0.3.1', found.sha, false)).toEqual({ ok: true, done: [`tagged ${found.sha.slice(0, 7)} v0.3.1`] });
+    expect(await findDirectTag(local, 'main', '0.3.1', false)).toEqual({ ok: false, error: 'v0.3.1 is already tagged in this repository.' });
+  });
+
+  it('pushes the release commit and its tag together when there is an origin', async () => {
+    const pushing = join(base, 'direct-release-origin');
+    makeRepo(pushing);
+    sh(base, ['init', '--quiet', '--bare', '-b', 'main', 'direct-release-origin.git']);
+    sh(pushing, ['remote', 'add', 'origin', join(base, 'direct-release-origin.git')]);
+    sh(pushing, ['push', '--quiet', '-u', 'origin', 'main']);
+    const drafted = await draftDirect({ repoRoot: pushing, base: 'main', version: '0.2.0', versionFiles: [], date: '2026-11-14', remote: true });
+    if (!drafted.ok) throw new Error(drafted.error);
+    expect(await commitRelease(drafted.draft, { push: true })).toEqual({
+      ok: true,
+      done: ['committed package.json, CHANGELOG.md on main as "Release 0.2.0"', 'tagged it v0.2.0', 'pushed main and v0.2.0 to origin'],
+    });
+    const remote = sh(pushing, ['ls-remote', 'origin']);
+    expect(remote).toContain('refs/heads/main');
+    expect(remote).toContain('refs/tags/v0.2.0');
+    // A tag on origin only is taken too.
+    sh(pushing, ['tag', '-d', 'v0.2.0']);
+    expect(await findDirectTag(pushing, 'main', '0.2.0', true)).toEqual({ ok: false, error: 'v0.2.0 is already tagged on origin.' });
   });
 });

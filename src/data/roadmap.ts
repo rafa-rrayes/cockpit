@@ -1,5 +1,5 @@
-// ROADMAP.md: the parser the board reads and the edits the board makes. Pure (no node, no vscode), so the
-// webview's browser preview runs the same code.
+// The roadmap board's file (.cockpit/roadmap.md or ROADMAP.md, see cockpitDir.ts): the parser the board reads and
+// the edits the board makes. Pure (no node, no vscode), so the webview's browser preview runs the same code.
 //
 // House format (read tolerantly: anything else is skipped, never an error):
 //   ## 1.2.0 — Comunidade             a release: version (optional "v" or [brackets]), "—", "-" or ":", an optional title
@@ -131,7 +131,7 @@ export function parseRoadmap(text: string): ReleasePlan[] {
 
 export type EditResult = { ok: true; text: string } | { ok: false; error: string };
 
-const STALE = 'ROADMAP.md changed since the board last read it. Try again.';
+const STALE = 'The roadmap changed since the board last read it. Try again.';
 const fail = (error: string): EditResult => ({ ok: false, error });
 
 /** One line, trimmed and bounded: a card is a single list item. A link typed into the text is dropped: only Cockpit
@@ -222,19 +222,19 @@ function rewrite(raw: string, change: { status?: ItemStatus; text?: string; inde
   return `${indent}${m[2]}${m[3]}${box === undefined ? '' : `[${box}] `}${rest}`;
 }
 
-/** The text of ROADMAP.md after `edit`, or why it cannot be made. `create` is not an edit of a text: see
+/** The text of the roadmap after `edit`, or why it cannot be made. `create` is not an edit of a text: see
  *  starterRoadmap. */
 export function applyRoadmapEdit(text: string, edit: RoadmapEdit): EditResult {
   const doc = scan(text);
   switch (edit.op) {
     case 'create':
-      return fail('ROADMAP.md already exists.');
+      return fail('The roadmap already exists.');
 
     case 'add': {
       const body = clean(edit.text);
       if (!body) return fail('A card needs some text.');
       const target = laneOf(doc, edit.lane);
-      if (!target) return fail(`ROADMAP.md has no "${edit.lane}" section any more.`);
+      if (!target) return fail(`The roadmap has no "${edit.lane}" section any more.`);
       const lines = target.doc.lines.slice();
       const spot = appendTo(target.doc, target.lane, [`- [ ] ${body}`]);
       lines.splice(spot.at, 0, ...spot.lines);
@@ -273,7 +273,7 @@ export function applyRoadmapEdit(text: string, edit: RoadmapEdit): EditResult {
       const lines = doc.lines.slice();
       const block = lines.splice(found.at.line, length);
       const target = laneOf(scan(lines.join(doc.eol)), edit.lane);
-      if (!target) return fail(`ROADMAP.md has no "${edit.lane}" section any more.`);
+      if (!target) return fail(`The roadmap has no "${edit.lane}" section any more.`);
       const out = target.doc.lines.slice();
 
       if (before) {
@@ -294,7 +294,7 @@ export function applyRoadmapEdit(text: string, edit: RoadmapEdit): EditResult {
     case 'addRelease': {
       const version = edit.version.trim().replace(/^v/i, '');
       if (!NEW_VERSION.test(version)) return fail('A release needs a version like 1.2.0.');
-      if (doc.lanes.some((l) => !l.plan.backlog && l.plan.version === version)) return fail(`ROADMAP.md already has ${version}.`);
+      if (doc.lanes.some((l) => !l.plan.backlog && l.plan.version === version)) return fail(`The roadmap already has ${version}.`);
       const title = clean(edit.title ?? '');
       const lines = doc.lines.slice();
       // Releases stay above the backlog.
@@ -311,7 +311,7 @@ export function applyRoadmapEdit(text: string, edit: RoadmapEdit): EditResult {
 
 /** Links the card to `branch` (replacing any link it had), moving it to `status` too when one is given. */
 export function linkCard(text: string, id: string, branch: string, status?: ItemStatus): EditResult {
-  if (!isLinkBranch(branch)) return fail(`"${branch}" cannot be written into ROADMAP.md.`);
+  if (!isLinkBranch(branch)) return fail(`"${branch}" cannot be written into the roadmap.`);
   const doc = scan(text);
   const found = locate(doc, id);
   if (!found) return fail(STALE);
@@ -320,7 +320,7 @@ export function linkCard(text: string, id: string, branch: string, status?: Item
   return done(doc, lines);
 }
 
-/** The text with every card linked to `branch` done and unlinked: what ROADMAP.md reads once the branch merged.
+/** The text with every card linked to `branch` done and unlinked: what the board reads once the branch merged.
  *  The same text when no card is linked to it. */
 export function finishBranch(text: string, branch: string): string {
   const doc = scan(text);
@@ -341,7 +341,7 @@ export interface MergedWork {
 }
 
 /** The text as the merges have it: every card of the merged branches done and unlinked, and the merged releases
- *  shipped. That is what the default branch's ROADMAP.md reads after them, so pulling them leaves the file clean. */
+ *  shipped. That is what the board reads after them. */
 export function finishMerged(text: string, work: MergedWork): string {
   let out = text;
   for (const b of work.branches) out = finishBranch(out, b);
@@ -352,60 +352,12 @@ export function finishMerged(text: string, work: MergedWork): string {
   return out;
 }
 
-const STATUS_WORDS: Record<ItemStatus, string> = { todo: 'planned', doing: 'in progress', done: 'done' };
-const CARD_CHARS = 48;
-const quoted = (text: string): string => {
-  const one = text.replace(/\s+/g, ' ').trim();
-  return `"${one.length > CARD_CHARS ? `${one.slice(0, CARD_CHARS - 1).trimEnd()}…` : one}"`;
-};
-
-/** How the board in `to` differs from the board in `from`, a few words a change: releases added or removed or with a
- *  new status, then cards added, moved to another lane, moved to another column, or removed. Cards are told apart by
- *  their text; those whose text is in `skip` are left out, and so are links, which are Cockpit's bookkeeping. */
-export function boardChanges(from: string, to: string, skip: string[] = []): string[] {
-  const norm = (text: string): string => text.replace(/\s+/g, ' ').trim();
-  const skipped = new Set(skip.map(norm));
-  const before = parseRoadmap(from);
-  const after = parseRoadmap(to);
-  const key = (l: ReleasePlan): string => (l.backlog ? '\0backlog' : l.version);
-  const name = (l: ReleasePlan): string => (l.backlog ? `the ${l.version}` : `release ${l.version}`);
-  const out: string[] = [];
-
-  const was = new Map(before.map((l) => [key(l), l]));
-  const now = new Set(after.map(key));
-  for (const lane of after) {
-    const old = was.get(key(lane));
-    if (!old) out.push(`added ${name(lane)}`);
-    else if (!lane.backlog && (old.status ?? '') !== (lane.status ?? '')) out.push(`${lane.version}: status ${old.status ?? 'none'} → ${lane.status ?? 'none'}`);
-  }
-  for (const lane of before) if (!now.has(key(lane))) out.push(`removed ${name(lane)}`);
-
-  type Card = { text: string; lane: string; status: ItemStatus };
-  const cards = (lanes: ReleasePlan[]): Card[] => lanes.flatMap((l) => l.items.filter((i) => !skipped.has(norm(i.text))).map((i) => ({ text: i.text, lane: l.version, status: i.status })));
-  // The cards of `from` by text; a text written twice pairs with the one in the same lane first.
-  const pool = new Map<string, Card[]>();
-  for (const c of cards(before)) pool.set(norm(c.text), [...(pool.get(norm(c.text)) ?? []), c]);
-  for (const card of cards(after)) {
-    const list = pool.get(norm(card.text)) ?? [];
-    const at = Math.max(0, list.findIndex((c) => c.lane === card.lane));
-    const [old] = list.splice(at, 1);
-    if (!old) {
-      out.push(`added ${quoted(card.text)} (${card.lane}, ${STATUS_WORDS[card.status]})`);
-      continue;
-    }
-    const moves = [old.lane !== card.lane && `${old.lane} → ${card.lane}`, old.status !== card.status && `${STATUS_WORDS[old.status]} → ${STATUS_WORDS[card.status]}`].filter(Boolean);
-    if (moves.length) out.push(`${quoted(card.text)} ${moves.join(', ')}`);
-  }
-  for (const c of [...pool.values()].flat()) out.push(`removed ${quoted(c.text)} (${c.lane})`);
-  return out;
-}
-
 /** The release's "Status:" set to `value`: the line it has rewritten, or one added under its heading (after a
  *  "Target:" line right there). */
 export function setLaneStatus(text: string, version: string, value: string): EditResult {
   const doc = scan(text);
   const lane = doc.lanes.find((l) => !l.plan.backlog && l.plan.version === version);
-  if (!lane) return fail(`ROADMAP.md has no "${version}" section any more.`);
+  if (!lane) return fail(`The roadmap has no "${version}" section any more.`);
   const lines = doc.lines.slice();
   const items = new Set(lane.items.map((i) => i.line));
   for (let i = lane.heading + 1; i < lane.end; i++) {

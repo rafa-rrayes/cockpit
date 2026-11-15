@@ -56,21 +56,26 @@ export function laneOf(state: State, branch: string | undefined): string {
   return state.releases.roadmap.find((l) => l.backlog)?.version ?? 'Backlog';
 }
 
-/** Why the branch cannot ship, or undefined when it is ready: a worktree of its own, commits the default branch
- *  lacks, nothing uncommitted, no pull request open or merged, no Claude working or waiting in it, and GitHub at hand. */
-export function shipProblem(item: WorkItem, state: State): string | undefined {
+/** Why the branch cannot ship, or undefined when it is ready: commits the default branch lacks, nothing uncommitted,
+ *  no pull request open or merged, no Claude working or waiting in it; in `pr` delivery GitHub at hand, in `direct`
+ *  the main checkout on the default branch (the merge happens there). `self`: the one asking is the Claude working
+ *  on the branch (`cockpit ship`), so a Claude in it does not count as busy. */
+export function shipProblem(item: WorkItem, state: State, opts: { self?: boolean } = {}): string | undefined {
   const base = state.work.defaultBranch ?? 'the default branch';
   const busy = item.sessionIds.some((id) => {
     const s = state.sessions[id];
     return s !== undefined && s.status !== 'idle' && s.status !== 'ended';
   });
   if (item.isDefault) return `${item.branch} is the default branch.`;
-  if (item.worktreePath === undefined || item.worktreePath === state.work.repoRoot) return `${item.branch} has no worktree of its own to commit ROADMAP.md in.`;
   if (item.dirtyCount > 0) return `${item.branch} has ${item.dirtyCount} uncommitted file${item.dirtyCount === 1 ? '' : 's'}: commit them, or resume its Claude, first.`;
   if (item.ahead === 0) return `${item.branch} has no commits that ${base} lacks.`;
   if (item.pr && item.pr.state !== 'closed') return `${item.branch} already has pull request #${item.pr.number} (${item.pr.state}).`;
-  if (busy) return `A Claude is still working on ${item.branch}.`;
-  if (!state.work.github) return `GitHub is not available here${state.work.githubNote ? ` (${state.work.githubNote})` : ''}: Cockpit publishes through gh.`;
+  if (busy && !opts.self) return `A Claude is still working on ${item.branch}.`;
+  if (state.work.delivery === 'direct') {
+    if (!canPull(state)) return `The main checkout${state.work.repoRoot ? ` (${state.work.repoRoot})` : ''} is not on ${base}: ${item.branch} is merged into ${base} there.`;
+  } else if (!state.work.github) {
+    return `GitHub is not available here${state.work.githubNote ? ` (${state.work.githubNote})` : ''}: Cockpit publishes through gh.`;
+  }
   return undefined;
 }
 

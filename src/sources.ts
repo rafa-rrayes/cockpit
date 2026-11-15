@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import type { ActivityEvent, ClaudeSession, Releases } from './model';
 import type { GitResult, GithubResult } from './compose';
 import { readClaude } from './data/claude';
-import { projectRootOf, readGit, recentCommits } from './data/git';
+import { readConfig, resolveDelivery } from './data/cockpitDir';
+import { hasOrigin, projectRootOf, readGit, recentCommits } from './data/git';
 import { type GithubRead, readGithub } from './data/github';
 import { readReleases } from './data/releases';
 
@@ -24,15 +25,19 @@ export interface GitSnapshot {
   releases: Releases;
 }
 
-/** Worktrees and branches, the default branch's recent commits, and releases (tags, ROADMAP.md, CHANGELOG.md):
- *  all local and cheap, so they refresh together. Outside git, releases still come from the folder's files. */
+/** Worktrees and branches, the default branch's recent commits, releases (tags, the board, CHANGELOG.md), whether
+ *  there is an origin and how work is delivered (.cockpit/config.json): all local and cheap, so they refresh
+ *  together. Outside git, releases still come from the folder's files. */
 export async function loadGit(workspacePath: string, now: number): Promise<GitSnapshot> {
-  const git = await readGit(workspacePath, now);
-  // Files come from the worktree that is open (its CHANGELOG is the one being written); tags and counts from the
-  // repository, which all its worktrees share.
+  const read = await readGit(workspacePath, now);
+  const root = read.repoRoot ?? workspacePath;
+  const [config, origin] = await Promise.all([readConfig(root), read.repoRoot ? hasOrigin(read.repoRoot) : false]);
+  const git: GitResult = { ...read, hasOrigin: origin, delivery: resolveDelivery(config.delivery, origin) };
+  // Files come from the worktree that is open (its CHANGELOG is the one being written); the board, tags and counts
+  // from the repository, which all its worktrees share.
   const [commits, releases] = await Promise.all([
-    git.repoRoot ? recentCommits(git.repoRoot, COMMIT_LIMIT) : [],
-    readReleases(git.toplevel ?? workspacePath, git.repoRoot ?? workspacePath),
+    read.repoRoot ? recentCommits(read.repoRoot, COMMIT_LIMIT) : [],
+    readReleases(read.toplevel ?? workspacePath, root, config),
   ]);
   return { git, commits, releases };
 }

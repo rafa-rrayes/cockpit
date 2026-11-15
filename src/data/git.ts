@@ -502,3 +502,9 @@ export async function recentCommits(repoRoot: string, limit: number): Promise<Ac
   const r = await git(repoRoot, ['log', `-n${Math.max(1, Math.floor(limit))}`, '--format=%H%x1f%ct%x1f%an%x1f%s', ...refs, '--']);
   return r.ok ? parseLog(r.stdout, def.branch) : [];
 }
+
+/** The repository has a remote named "origin" with a URL. */
+export async function hasOrigin(repoRoot: string): Promise<boolean> {
+  const r = await git(repoRoot, ['config', '--get', 'remote.origin.url'], 3000);
+  return r.ok && r.stdout.trim() !== '';
+}

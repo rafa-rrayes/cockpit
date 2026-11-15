@@ -1,8 +1,8 @@
-// Releases adapter: the current version, the latest v* tag, ROADMAP.md and CHANGELOG.md.
+// Releases adapter: the current version, the latest v* tag, the roadmap board and CHANGELOG.md.
 //
 // House format (both files are read tolerantly: anything else is skipped, never an error):
 //
-// ROADMAP.md: see roadmap.ts.
+// The board (.cockpit/roadmap.md or ROADMAP.md, cockpitDir.ts says which): see roadmap.ts.
 //
 // CHANGELOG.md
 //   ## Unreleased                     also "## [Unreleased]"
@@ -10,9 +10,11 @@
 //   ### Added                         sub-headings are skipped, their items kept
 //   - A line                          every list item is one line; an indented continuation joins the item above
 //   Kept in file order (newest first by convention), Unreleased moved to the top, at most 5 entries.
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ChangelogEntry, Releases } from '../model';
+import { type CockpitConfig, readConfig, resolveRoadmap } from './cockpitDir';
 import { defaultRefs, runGit as git } from './git';
 import { parseRoadmap, VERSION } from './roadmap';
 
@@ -142,12 +144,14 @@ export const VERSION_SOURCES = ['package.json', 'app.json', 'app/app.json', 'pyp
 
 const readText = (path: string) => readFile(path, 'utf8').catch(() => undefined);
 
-/** Manifests, ROADMAP.md and CHANGELOG.md from `dir` (the worktree open, whose files may be ahead of the main
- *  checkout's); tags and commit counts from `repoRoot`. */
-export async function readReleases(dir: string, repoRoot = dir): Promise<Releases> {
+/** Manifests and CHANGELOG.md from `dir` (the worktree open, whose files may be ahead of the main checkout's); the
+ *  board from `repoRoot`, the main checkout (one board per repository; cockpitDir.ts resolveRoadmap says which
+ *  file, from `config`, read when not given); tags and commit counts from `repoRoot`. */
+export async function readReleases(dir: string, repoRoot = dir, config?: CockpitConfig): Promise<Releases> {
+  const board = resolveRoadmap(repoRoot, config ?? (await readConfig(repoRoot)), existsSync);
   const [manifests, roadmapText, changelogText, tags] = await Promise.all([
     Promise.all(VERSION_SOURCES.map((f) => readText(join(dir, f)))),
-    readText(join(dir, 'ROADMAP.md')),
+    readText(board.path),
     readText(join(dir, 'CHANGELOG.md')),
     // versionsort.suffix=- sorts v1.2.0-rc1 before v1.2.0.
     git(repoRoot, ['-c', 'versionsort.suffix=-', 'tag', '--list', 'v*', '--sort=-v:refname', '--format=%(refname:short)%09%(creatordate:unix)']),
@@ -155,7 +159,8 @@ export async function readReleases(dir: string, repoRoot = dir): Promise<Release
 
   const out: Releases = {
     available: false,
-    roadmapPath: join(dir, 'ROADMAP.md'),
+    roadmapPath: board.path,
+    roadmapName: board.name,
     roadmapExists: roadmapText !== undefined,
     roadmap: roadmapText ? parseRoadmap(roadmapText) : [],
     changelog: changelogText ? parseChangelog(changelogText) : [],

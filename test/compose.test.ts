@@ -283,6 +283,12 @@ describe('compose', () => {
     expect(state.workspace).toBeUndefined();
   });
 
+  it('carries the origin and the delivery the git read worked out', () => {
+    expect(compose({ now: NOW, sessions: [], git: git() }).work).toMatchObject({ hasOrigin: false, delivery: 'pr' });
+    expect(compose({ now: NOW, sessions: [], git: { ...git(), hasOrigin: false, delivery: 'direct' } }).work).toMatchObject({ hasOrigin: false, delivery: 'direct' });
+    expect(compose({ now: NOW, sessions: [], git: { ...git(), hasOrigin: true, delivery: 'pr' } }).work).toMatchObject({ hasOrigin: true, delivery: 'pr' });
+  });
+
   it('shows the cards of a branch whose pull request merged as done, without ROADMAP.md saying so yet', () => {
     const roadmap = parseRoadmap('## 0.2.0\n\n- [~] X <!-- cockpit:feature-x -->\n- [ ] Y\n');
     const releases = { available: true, roadmap, changelog: [] };

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseChangelog } from '../src/data/releases';
 import { parseRoadmap } from '../src/data/roadmap';
 import { emptyState, type State, type WorkItem } from '../src/model';
-import { bumpVersion, compareVersions, datedChangelog, isReleaseVersion, mergedWork, otherBoardChanges, prBody, prTitle, isShipped, releaseStep, roadmapCommitMessage, withMerged } from '../src/publish';
+import { bumpVersion, compareVersions, datedChangelog, isReleaseVersion, mergedWork, prBody, prTitle, isShipped, releaseStep, withMerged } from '../src/publish';
 
 const card = (text: string, lane = '0.2.0') => ({ text, lane });
 
@@ -21,12 +21,6 @@ describe('pull request text', () => {
     expect(prBody([card('A'), card('B', 'Backlog')], '  Did it.\n')).toBe('Roadmap:\n\n- [x] A (0.2.0)\n- [x] B (Backlog)\n\n## Report\n\nDid it.');
     expect(prBody([], undefined)).toBe('');
     expect(prBody([], 'Only a report')).toBe('## Report\n\nOnly a report');
-  });
-
-  it('names the roadmap commit', () => {
-    expect(roadmapCommitMessage([card('Card A')])).toBe('Roadmap: Card A done');
-    expect(roadmapCommitMessage([card('A'), card('B')])).toBe('Roadmap: 2 cards done');
-    expect(roadmapCommitMessage([])).toBe('Roadmap: the board as it is on the main checkout');
   });
 });
 
@@ -89,6 +83,20 @@ describe('releaseStep', () => {
     expect(releaseStep(lane('0.1.0'), s())).toEqual({ step: 'tag' });
   });
 
+  it('in direct delivery: Release when every card is done, Tag only for a lane that says shipped, never a review', () => {
+    const direct = (extra: Parameters<typeof s>[0] = {}): State => {
+      const st = s(extra);
+      return { ...st, work: { ...st.work, delivery: 'direct' } };
+    };
+    expect(releaseStep(lane('0.2.0'), direct())).toEqual({ step: 'release' });
+    // A release pull request (of an earlier pr setup) does not count.
+    expect(releaseStep(lane('0.2.0'), direct({ items: [release('open')] }))).toEqual({ step: 'release' });
+    expect(releaseStep(lane('0.2.0'), direct({ items: [release('merged')] }))).toEqual({ step: 'release' });
+    expect(releaseStep(lane('0.1.0'), direct())).toEqual({ step: 'tag' });
+    expect(releaseStep(lane('0.1.0'), direct({ latestTag: 'v0.1.0' }))).toBeUndefined();
+    expect(releaseStep(lane('0.3.0'), direct())).toBeUndefined();
+  });
+
   it('offers nothing for open cards, the backlog, or a version already tagged', () => {
     expect(releaseStep(lane('0.3.0'), s())).toBeUndefined();
     expect(releaseStep(lane('Backlog'), s())).toBeUndefined();
@@ -149,14 +157,5 @@ describe('withMerged and mergedWork', () => {
     const lane = s.releases.roadmap[0];
     if (!lane) throw new Error('no lane');
     expect(releaseStep(lane, s)).toEqual({ step: 'release' });
-  });
-});
-
-describe('otherBoardChanges', () => {
-  it('says nothing when there is nothing else, else how many and the first five', () => {
-    expect(otherBoardChanges([], 'origin/main')).toBe('');
-    expect(otherBoardChanges(['added "x" (Backlog, planned)'], 'origin/main')).toBe('It also carries 1 other board change, against ROADMAP.md on origin/main:\n- added "x" (Backlog, planned)');
-    const many = otherBoardChanges(['a', 'b', 'c', 'd', 'e', 'f', 'g'], 'origin/main');
-    expect(many).toBe('It also carries 7 other board changes, against ROADMAP.md on origin/main:\n- a\n- b\n- c\n- d\n- e\n- and 2 more');
   });
 });

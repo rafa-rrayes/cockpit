@@ -5,10 +5,11 @@
 // A source that fails keeps its last good result, so one failure never blanks the others, and a source never
 // runs twice at once: a trigger during a run asks for one more run after it.
 import { type FSWatcher, watch } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import * as vscode from 'vscode';
 import { parseMark } from './catchup';
 import { compose, type GithubResult } from './compose';
+import { BOARD_FILE, CONFIG_FILE, LEGACY_BOARD_FILE } from './data/cockpitDir';
 import { runGit, projectRootOf } from './data/git';
 import { parseRoadmap } from './data/roadmap';
 import type { CatchUpMark, ClaudeSession, Settings, State } from './model';
@@ -106,6 +107,9 @@ export class Store implements vscode.Disposable {
   private claudeWatcher: FSWatcher | undefined;
   private gitWatchers: FSWatcher[] = [];
   private watchedGitDir: string | undefined;
+  private roadmapWatchers: vscode.Disposable[] = [];
+  /** The files roadmapWatchers watch, joined: what tells whether they need re-making. */
+  private watchedRoadmap: string | undefined;
   /** The first git run: GitHub waits for it, because it needs the repository root. */
   private readonly firstGit: Promise<void>;
   private claudeTimer: NodeJS.Timeout | undefined;
@@ -127,6 +131,7 @@ export class Store implements vscode.Disposable {
       },
       () => {
         this.watchGitDir();
+        this.watchRoadmap();
         changed();
       },
       opts.log,
@@ -155,7 +160,6 @@ export class Store implements vscode.Disposable {
       vscode.window.onDidOpenTerminal(() => this.claudeSoon()),
       vscode.window.onDidCloseTerminal(() => this.claudeSoon()),
       vscode.workspace.onDidSaveTextDocument(() => this.gitSoon()),
-      ...this.watchRoadmap(),
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('cockpit.endedSessionDays')) void this.claude.run();
         if (e.affectsConfiguration('cockpit.githubPollSeconds')) this.scheduleGithub();
@@ -281,12 +285,23 @@ export class Store implements vscode.Disposable {
 
   // ───────────────────────────── Triggers ─────────────────────────────
 
-  /** A ROADMAP.md written from outside VS Code (a Claude in a terminal) reaches the board without waiting for the timer. */
-  private watchRoadmap(): vscode.Disposable[] {
-    const ws = this.opts.workspace;
-    if (!ws) return [];
-    const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(ws.path), 'ROADMAP.md'));
-    return [watcher, watcher.onDidChange(() => this.gitSoon()), watcher.onDidCreate(() => this.gitSoon()), watcher.onDidDelete(() => this.gitSoon())];
+  /** A board written from outside VS Code (a Claude in a terminal) reaches the board without waiting for the timer.
+   *  Watched: the board's file, and the files that decide which file it is (.cockpit/config.json, .cockpit/roadmap.md,
+   *  ROADMAP.md), each in its own folder, so nothing is watched recursively. Re-made when the board moves. */
+  private watchRoadmap(): void {
+    const snapshot = this.git.value;
+    const root = snapshot?.git.repoRoot ?? this.opts.workspace?.path;
+    const board = snapshot?.releases.roadmapPath;
+    if (!root || !board) return;
+    const files = [...new Set([board, ...[CONFIG_FILE, BOARD_FILE, LEGACY_BOARD_FILE].map((f) => join(root, f))])];
+    const key = files.join('\0');
+    if (key === this.watchedRoadmap) return;
+    for (const d of this.roadmapWatchers) d.dispose();
+    this.watchedRoadmap = key;
+    this.roadmapWatchers = files.flatMap((file) => {
+      const w = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(dirname(file)), basename(file)));
+      return [w, w.onDidChange(() => this.gitSoon()), w.onDidCreate(() => this.gitSoon()), w.onDidDelete(() => this.gitSoon())];
+    });
   }
 
   private watchClaudeSessions(): void {
@@ -375,6 +390,7 @@ export class Store implements vscode.Disposable {
     for (const t of [this.claudeTimer, this.gitTimer, this.githubTimer]) clearInterval(t);
     this.claudeWatcher?.close();
     for (const w of this.gitWatchers) w.close();
+    for (const d of this.roadmapWatchers) d.dispose();
     for (const s of [this.claude, this.git, this.github]) s.dispose();
     for (const d of this.disposables) d.dispose();
     this.emitter.dispose();

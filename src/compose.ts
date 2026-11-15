@@ -8,6 +8,7 @@ import type {
   Project,
   PullRequest,
   CatchUpMark,
+  Delivery,
   Releases,
   Settings,
   State,
@@ -22,6 +23,10 @@ export interface GitResult {
   repoRoot?: string;
   defaultBranch?: string;
   items: WorkItem[];
+  /** The repository has a remote named "origin". Absent: no. */
+  hasOrigin?: boolean;
+  /** "auto" in .cockpit/config.json already resolved (sources.ts loadGit). Absent: `pr`. */
+  delivery?: Delivery;
 }
 
 export interface GithubResult {
@@ -185,7 +190,7 @@ function latestRunsPerWorkflow(runs: CiRun[], branch: string): CiRun[] {
 
 /** Worktrees a Claude stopped in with work left uncommitted: no session on the branch is working or waiting (the
  *  newest one is idle or ended) and the worktree has uncommitted files. The main checkout is left out: the board's
- *  own ROADMAP.md edits live there. */
+ *  own edits may live there. */
 export function stoppedWithChanges(items: WorkItem[], sessions: ClaudeSession[], repoRoot: string | undefined): { item: WorkItem; session: ClaudeSession }[] {
   const byId = new Map(sessions.map((s) => [s.sessionId, s]));
   const out: { item: WorkItem; session: ClaudeSession }[] = [];
@@ -281,9 +286,8 @@ export function compose(input: ComposeInput): State {
     projects,
     work: {
       available: git?.available ?? false,
-      // Placeholders until the git read and .cockpit/config.json say (0.3.0, brief A).
-      hasOrigin: false,
-      delivery: 'pr',
+      hasOrigin: git?.hasOrigin ?? false,
+      delivery: git?.delivery ?? 'pr',
       items,
       ciRuns: github?.ciRuns ?? [],
     },

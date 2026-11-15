@@ -1,25 +1,44 @@
 // Every message the webview can post, handled here. The webview is treated as untrusted input: each message is
 // checked against the current State (known session ids, known paths, links it shows) before anything happens, and
 // nothing changes on disk except through cleanMerged, which lists what it would do and asks first, and through the
-// roadmap board, which edits ROADMAP.md and nothing else, and through the settings popover, which writes cockpit.*
-// settings only, each value checked against what its setting takes. Starting a Claude on cards opens a terminal; the Claude
-// it runs is then the one that changes things, in the terminal, under its own permission prompts. Ship, Release and Tag
-// reach outside the machine: each shows what it will send and does nothing until the person confirms.
+// roadmap board, which edits the board's file (and makes .cockpit/ for it) and nothing else, and through the settings
+// popover, which writes cockpit.* settings only, each value checked against what its setting takes. Starting a Claude
+// on cards opens a terminal; the Claude it runs is then the one that changes things, in the terminal, under its own
+// permission prompts. Ship, Release and Tag show what they will do and do nothing until the person confirms; asked
+// through the `cockpit` command (runAgentAction), only what leaves the machine asks, and the rest runs at once.
 import { accessSync, constants, existsSync, statSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
 import * as vscode from 'vscode';
-import { type AgentAction, type AgentResult } from './agent';
+import { type AgentAction, type AgentResult, statusLines } from './agent';
 import { markOf, shipProblem } from './catchup';
 import { removeMerged } from './clean';
+import { ensureCockpitDir } from './data/cockpitDir';
 import { runGh } from './data/github';
-import { type EditResult, applyRoadmapEdit, boardChanges, finishBranch, finishMerged, linkCard, parseRoadmap, setLaneStatus, starterRoadmap } from './data/roadmap';
+import { type EditResult, applyRoadmapEdit, finishBranch, finishMerged, linkCard, parseRoadmap, setLaneStatus, starterRoadmap } from './data/roadmap';
 import { cleanCandidates, isHttpsUrl, isSessionId, knownFolders, knownUrls, parseMessage } from './guards';
 import { type LaunchCard, launchArgs, launchEnv, sessionName, worktreeName } from './launch';
 import type { CatchUpMark, ClaudeSession, LaunchOptions, RoadmapEdit, State, WorkItem } from './model';
-import { type ShippedCard, mergedWork, otherBoardChanges, prBody, prTitle, releaseBody, releaseBranch, releaseStep, releaseTitle, roadmapCommitMessage, tagName } from './publish';
+import { type ShippedCard, mergedWork, prBody, prTitle, releaseBody, releaseBranch, releaseStep, releaseTitle, tagName } from './publish';
 import { isProjectSetting, storedValue } from './settings';
-import { type Outcome, REMOTE, baseRoadmap, draftRelease, findRelease, openRelease, prsFrom, pullDefault, pushTag, remoteProblem, shipBranch } from './ship';
+import {
+  type Outcome,
+  REMOTE,
+  commitRelease,
+  draftDirect,
+  draftRelease,
+  findDirectTag,
+  findRelease,
+  isTracked,
+  mergeBranch,
+  openRelease,
+  prsFrom,
+  pullDefault,
+  pushTag,
+  remoteProblem,
+  shipBranch,
+} from './ship';
 
 export interface ActionHost {
   state(): State | undefined;
@@ -112,7 +131,7 @@ export async function handleMessage(raw: unknown, host: ActionHost): Promise<voi
       return;
     case 'openRoadmap': {
       const path = state?.releases.roadmapPath;
-      if (!path || !existsSync(path)) return refuse('There is no ROADMAP.md yet.');
+      if (!path || !existsSync(path)) return refuse('There is no roadmap yet.');
       await vscode.window.showTextDocument(vscode.Uri.file(path), { preview: false, viewColumn: vscode.ViewColumn.Beside });
       return;
     }
@@ -120,35 +139,71 @@ export async function handleMessage(raw: unknown, host: ActionHost): Promise<voi
 }
 
 /** What the `cockpit` command asked for (src/cli.ts, through the inbox): the same actions as the board's buttons,
- *  answered in words. A stub until 0.3.0's brief A fills it in. */
-export async function runAgentAction(_action: AgentAction, _host: ActionHost): Promise<AgentResult> {
-  return { ok: false, lines: ['not implemented'] };
+ *  answered in lines to print. Only what leaves the machine asks in a VS Code dialog first. */
+export async function runAgentAction(action: AgentAction, host: ActionHost): Promise<AgentResult> {
+  if (action.verb === 'status') {
+    await host.refreshLocal();
+    const state = host.state();
+    return state ? { ok: true, lines: statusLines(state) } : { ok: false, lines: ['Cockpit has not read this repository yet. Try again in a moment.'] };
+  }
+  const ch = cliChannel();
+  switch (action.verb) {
+    case 'ship':
+      // The Claude that runs `cockpit ship` is the one working on the branch: it does not count as busy.
+      await ship(action.branch, host, ch, { self: true });
+      break;
+    case 'release':
+      await release(action.version, host, ch);
+      break;
+    case 'tag':
+      await tag(action.version, host, ch);
+      break;
+    case 'pull':
+      await pull(host, ch);
+      break;
+    case 'add':
+      await inRoadmapQueue(() => agentEdit({ op: 'add', lane: action.lane, text: action.text }, host, ch));
+      break;
+    case 'lane':
+      await inRoadmapQueue(() => agentEdit({ op: 'addRelease', version: action.version, ...(action.title ? { title: action.title } : {}) }, host, ch));
+      break;
+  }
+  return ch.result();
 }
 
 let roadmapQueue: Promise<void> = Promise.resolve();
 
-/** Runs `fn` after every ROADMAP.md change queued before it. */
+/** Runs `fn` after every board change queued before it. */
 function inRoadmapQueue(fn: () => Promise<void>): Promise<void> {
   const run = roadmapQueue.then(fn);
   roadmapQueue = run.catch(() => undefined);
   return run;
 }
 
+const boardName = (state: State | undefined): string => state?.releases.roadmapName ?? 'The roadmap';
+
+/** Writes the starter board where the board is to be (`.cockpit/` made first, with its `.gitignore`). */
+async function createBoard(state: State, path: string, host: ActionHost): Promise<void> {
+  const root = state.work.repoRoot ?? state.workspace?.path;
+  if (root) await ensureCockpitDir(root);
+  await mkdir(dirname(path), { recursive: true });
+  const text = starterRoadmap(state.releases.currentVersion);
+  await vscode.workspace.fs.writeFile(vscode.Uri.file(path), Buffer.from(text, 'utf8'));
+  host.roadmapChanged(text);
+}
+
 async function editRoadmap(edit: RoadmapEdit, host: ActionHost): Promise<void> {
-  const releases = host.state()?.releases;
-  const path = releases?.roadmapPath;
-  if (!releases || !path) return refuse('Open a folder to keep a roadmap in.');
+  const state = host.state();
+  const path = state?.releases.roadmapPath;
+  if (!state || !path) return refuse('Open a folder to keep a roadmap in.');
   const uri = vscode.Uri.file(path);
 
   if (edit.op === 'create') {
     if (existsSync(path)) return host.refreshGit();
-    const text = starterRoadmap(releases.currentVersion);
-    await vscode.workspace.fs.writeFile(uri, Buffer.from(text, 'utf8'));
-    host.roadmapChanged(text);
-    return;
+    return createBoard(state, path, host);
   }
   if (!existsSync(path)) {
-    refuse('ROADMAP.md is gone.');
+    refuse(`${boardName(state)} is gone.`);
     return host.refreshGit();
   }
 
@@ -163,16 +218,28 @@ async function editRoadmap(edit: RoadmapEdit, host: ActionHost): Promise<void> {
   await changeRoadmap(path, (text) => applyRoadmapEdit(text, edit), host);
 }
 
-/** Changes ROADMAP.md at `path` through its document, not the file: a ROADMAP.md open in an editor is edited as it
- *  stands there, and the change can be undone there. A change that cannot be made is refused and the board
- *  reloads. True when the file now holds the change. */
-async function changeRoadmap(path: string, change: (text: string) => EditResult, host: ActionHost): Promise<boolean> {
+/** `cockpit add` and `cockpit lane`: the edit, on a board created first when there is none. */
+async function agentEdit(edit: Extract<RoadmapEdit, { op: 'add' | 'addRelease' }>, host: ActionHost, ch: Channel): Promise<void> {
+  const state = host.state();
+  const path = state?.releases.roadmapPath;
+  if (!state || !path) return ch.refuse('No folder is open to keep a roadmap in.');
+  const created = !existsSync(path);
+  if (created) await createBoard(state, path, host);
+  if (!(await changeRoadmap(path, (text) => applyRoadmapEdit(text, edit), host, ch.refuse))) return;
+  const did = edit.op === 'add' ? `added "${edit.text.replace(/\s+/g, ' ').trim()}" to ${edit.lane}` : `added the ${edit.version.replace(/^v/i, '')} lane`;
+  await ch.tell(boardName(state), { ok: true, done: [...(created ? ['created the board'] : []), did] });
+}
+
+/** Changes the board's file at `path` through its document, not the file: a board open in an editor is edited as it
+ *  stands there, and the change can be undone there. A change that cannot be made is refused (through `say`) and the
+ *  board reloads. True when the file now holds the change. */
+async function changeRoadmap(path: string, change: (text: string) => EditResult, host: ActionHost, say: (message: string) => void = refuse): Promise<boolean> {
   const uri = vscode.Uri.file(path);
   const doc = await vscode.workspace.openTextDocument(uri);
   const before = doc.getText();
   const result = change(before);
   if (!result.ok) {
-    refuse(result.error);
+    say(result.error);
     host.roadmapChanged(before);
     return false;
   }
@@ -190,7 +257,7 @@ async function changeRoadmap(path: string, change: (text: string) => EditResult,
   const span = new vscode.WorkspaceEdit();
   span.replace(uri, new vscode.Range(doc.positionAt(start), doc.positionAt(endBefore)), after.slice(start, endAfter));
   if (!(await vscode.workspace.applyEdit(span)) || !(await doc.save())) {
-    refuse('Could not write ROADMAP.md.');
+    say(`Could not write ${boardName(host.state())}.`);
     await host.refreshGit();
     return false;
   }
@@ -221,13 +288,13 @@ function findClaude(): string | undefined {
 async function startClaude(ids: string[], options: LaunchOptions, host: ActionHost): Promise<void> {
   const state = host.state();
   const path = state?.releases.roadmapPath;
-  if (!state || !path || !existsSync(path)) return refuse('There is no ROADMAP.md to start from.');
+  if (!state || !path || !existsSync(path)) return refuse('There is no roadmap to start from.');
   const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(path));
   const lanes = parseRoadmap(doc.getText());
   const found = ids.map((id) => lanes.flatMap((lane) => lane.items.map((item) => ({ item, lane }))).find((x) => x.item.id === id));
   const cards = found.filter((x) => x !== undefined);
   if (cards.length < ids.length) {
-    refuse('ROADMAP.md changed since the board last read it. Try again.');
+    refuse('The roadmap changed since the board last read it. Try again.');
     host.roadmapChanged(doc.getText());
     return;
   }
@@ -237,7 +304,8 @@ async function startClaude(ids: string[], options: LaunchOptions, host: ActionHo
   const claude = findClaude();
   if (!claude) return refuse('Cockpit could not find `claude` on the PATH. Install Claude Code, or start VS Code from a shell that has it.');
 
-  const cwd = dirname(path);
+  // The folder this window has open: the board may be in .cockpit/, or in another checkout.
+  const cwd = state.workspace?.path ?? dirname(path);
   const launch: LaunchCard[] = open.map((c) => ({ text: c.item.text, lane: c.lane.version }));
   let worktree: string | undefined;
   if (options.worktree) {
@@ -271,22 +339,70 @@ async function startClaude(ids: string[], options: LaunchOptions, host: ActionHo
 }
 
 // ───────────────────────────── Ship, Release, Tag, Pull ─────────────────────────────
+// Each follows state.work.delivery: `pr` publishes through GitHub, `direct` merges and releases in the main checkout
+// (pushing too when there is an origin, which only an explicit "delivery": "direct" gives). Cockpit never commits the
+// board on a branch; a direct release commits it with the release when git tracks it.
+
+/** Where an action's words go. The board: VS Code's messages and dialogs. The `cockpit` command: lines it prints. */
+interface Channel {
+  via: 'board' | 'cli';
+  refuse(message: string): void;
+  tell(what: string, outcome: Outcome): Promise<void>;
+}
+
+const boardChannel: Channel = { via: 'board', refuse: (m) => refuse(m), tell: (w, o) => tell(w, o) };
+
+/** The lines `cockpit` prints. ok: something was done and nothing was refused or failed. */
+function cliChannel(): Channel & { result(): AgentResult } {
+  const lines: string[] = [];
+  let failed = false;
+  let told = false;
+  return {
+    via: 'cli',
+    refuse(message) {
+      failed = true;
+      lines.push(message);
+    },
+    async tell(what, outcome) {
+      told = true;
+      if (outcome.ok) {
+        lines.push(`${what}: ${outcome.done.join(', ')}.`);
+        return;
+      }
+      failed = true;
+      lines.push(`${what} stopped. ${outcome.error ?? ''}`.trim());
+      lines.push(outcome.done.length ? `Done before it stopped: ${outcome.done.join('; ')}.` : 'Nothing was changed.');
+    },
+    result: () => (lines.length ? { ok: told && !failed, lines } : { ok: false, lines: ['Cockpit did nothing: it has not read this repository yet.'] }),
+  };
+}
+
+/** Asks before an action: always from the board; from `cockpit` only when it leaves the machine (a push, a pull
+ *  request, a pushed tag). A cancelled dialog is said back to `cockpit`. */
+async function confirm(ch: Channel, leavesMachine: boolean, title: string, detail: string, go: string): Promise<boolean> {
+  if (ch.via === 'cli' && !leavesMachine) return true;
+  if ((await vscode.window.showWarningMessage(title, { modal: true, detail }, go)) === go) return true;
+  if (ch.via === 'cli') ch.refuse(`${title} Cancelled in VS Code: nothing was done.`);
+  return false;
+}
 
 interface Checkout {
   repoRoot: string;
   base: string;
-  /** The main checkout's ROADMAP.md, when it has one. */
+  /** The board's file, when it exists. */
   roadmap?: string;
+  /** The board's file from the root: ".cockpit/roadmap.md", "ROADMAP.md". */
+  name: string;
 }
 
-/** These run from the main checkout only: its ROADMAP.md is the board's, and its default branch is what they publish
- *  into. A string says why not. */
+/** These run on the main checkout (repoRoot), whatever worktree the window has open: the board is the repository's,
+ *  and its default branch is what they deliver into. A string says why not. */
 function mainCheckout(state: State): Checkout | string {
   const { repoRoot, defaultBranch: base } = state.work;
   if (!repoRoot || !base) return 'No git repository with a default branch is open.';
   const path = state.releases.roadmapPath;
-  if (path !== join(repoRoot, 'ROADMAP.md')) return `Open the main checkout (${repoRoot}) for this: its ROADMAP.md is the board's.`;
-  return existsSync(path) ? { repoRoot, base, roadmap: path } : { repoRoot, base };
+  const name = state.releases.roadmapName ?? 'The roadmap';
+  return path && existsSync(path) ? { repoRoot, base, roadmap: path, name } : { repoRoot, base, name };
 }
 
 /** Why GitHub cannot be published to, or undefined. */
@@ -297,11 +413,12 @@ async function publishProblem(state: State, repoRoot: string): Promise<string | 
 
 const roadmapNow = async (path: string): Promise<string> => (await vscode.workspace.openTextDocument(vscode.Uri.file(path))).getText();
 
-/** The board's text, refused while it has unsaved edits in an editor: those are not on disk, and would go out unseen. */
-async function savedRoadmap(path: string): Promise<string | undefined> {
+/** The board's text, refused while it has unsaved edits in an editor: those are not on disk, and would be committed
+ *  unseen. */
+async function savedRoadmap(path: string, name: string, ch: Channel): Promise<string | undefined> {
   const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(path));
   if (!doc.isDirty) return doc.getText();
-  refuse('ROADMAP.md has unsaved changes in an editor. Save it first.');
+  ch.refuse(`${name} has unsaved changes in an editor. Save it first.`);
   return undefined;
 }
 
@@ -333,171 +450,230 @@ async function tell(what: string, outcome: Outcome): Promise<void> {
   void vscode.window.showErrorMessage(`${what} stopped. ${outcome.error ?? ''}`, { modal: true, detail });
 }
 
-/** Pushes a finished branch and opens its pull request, after a confirmation that shows the title and the body. The
- *  board travels with it: ROADMAP.md as the main checkout has it, the branch's cards ticked and unlinked (and what
- *  merged since the last Pull finished too), is committed on the branch, so the merge brings it to the default branch
- *  and the main checkout never commits. That is the whole board, so the confirmation lists what else it changes. */
-async function ship(branch: string, host: ActionHost): Promise<void> {
+/** Finishes a branch. `pr`: pushes it and opens its pull request, after a confirmation that shows the title and the
+ *  body; its cards are marked done by the Pull after the merge. `direct`: merges it into the default branch in the
+ *  main checkout, then marks its cards done on the board. */
+async function ship(branch: string, host: ActionHost, ch: Channel = boardChannel, opts: { self?: boolean } = {}): Promise<void> {
   await host.refreshLocal();
   const state = host.state();
   if (!state) return;
   const at = mainCheckout(state);
-  if (typeof at === 'string') return refuse(at);
+  if (typeof at === 'string') return ch.refuse(at);
   const item = state.work.items.find((i) => i.branch === branch);
-  if (!item) return refuse(`${branch} is no longer a branch here.`);
-  const problem = shipProblem(item, state) ?? (await remoteProblem(at.repoRoot));
-  if (problem) return refuse(problem);
-  const worktree = item.worktreePath as string;
-  const listed = await prsFrom(runGh, at.repoRoot, branch);
-  if (!listed.ok) return refuse(listed.error);
-  const existing = listed.prs.find((p) => p.state !== 'closed');
-  if (existing) return refuse(`${branch} already has pull request #${existing.number} (${existing.state}).`);
-
+  if (!item) return ch.refuse(`${branch} is no longer a branch here.`);
+  const problem = shipProblem(item, state, opts);
+  if (problem) return ch.refuse(problem);
   const cards: ShippedCard[] = state.releases.roadmap.flatMap((l) => l.items.filter((i) => i.branch === branch).map((i) => ({ text: i.text, lane: l.version })));
-  let before: string | undefined;
-  if (at.roadmap) {
-    before = await savedRoadmap(at.roadmap);
-    if (before === undefined) return;
-  }
-  const merged = mergedWork(state.releases.roadmap);
-  const roadmap = before === undefined ? undefined : finishBranch(finishMerged(before, merged), branch);
-  let others = '';
-  if (roadmap !== undefined) {
-    const onBase = await progress(`reading ${at.base}'s ROADMAP.md…`, () => baseRoadmap(at.repoRoot, at.base));
-    others = otherBoardChanges(boardChanges(onBase ?? '', roadmap, cards.map((c) => c.text)), `${REMOTE}/${at.base}`);
-  }
+  if (state.work.delivery === 'direct') return shipDirect(branch, cards, at, state, host, ch);
+
+  const remote = await remoteProblem(at.repoRoot);
+  if (remote) return ch.refuse(remote);
+  const listed = await prsFrom(runGh, at.repoRoot, branch);
+  if (!listed.ok) return ch.refuse(listed.error);
+  const existing = listed.prs.find((p) => p.state !== 'closed');
+  if (existing) return ch.refuse(`${branch} already has pull request #${existing.number} (${existing.state}).`);
+
   const report = item.sessionIds.map((id) => state.sessions[id]?.report).find(Boolean);
   const title = prTitle(cards, item.lastCommitSubject ?? branch);
   const body = prBody(cards, report);
-  const go = 'Push and open PR';
   const detail = [
     `Pushes ${branch} to ${REMOTE} and opens a pull request into ${at.base}.`,
-    roadmap === undefined
-      ? ''
-      : `First it commits ROADMAP.md on the branch as the board has it now${cards.length ? `, with ${plural(cards.length, 'card')} done` : ''}; if ${at.base}'s ROADMAP.md changed since the branch started, ${REMOTE}/${at.base} is merged into the branch before that. This checkout's ROADMAP.md stays as it is until Pull brings in the merge.`,
-    others,
+    cards.length ? `Once it merges, Pull marks ${plural(cards.length, 'card')} done on the board.` : '',
     `Title: ${title}`,
     `Body:\n${preview(body)}`,
   ]
     .filter(Boolean)
     .join('\n\n');
-  if ((await vscode.window.showWarningMessage(`Ship ${branch}?`, { modal: true, detail }, go)) !== go) return;
-  if (at.roadmap && (await roadmapNow(at.roadmap)) !== before) return refuse('ROADMAP.md changed while the confirmation was open. Ship again to see it as it is now.');
+  if (!(await confirm(ch, true, `Ship ${branch}?`, detail, 'Push and open PR'))) return;
   const outcome = await progress(`shipping ${branch}…`, () =>
-    shipBranch({ worktree, branch, base: at.base, roadmap, commitMessage: roadmapCommitMessage(cards), title, body }, runGh),
+    shipBranch({ repoRoot: at.repoRoot, ...(item.worktreePath ? { worktree: item.worktreePath } : {}), branch, base: at.base, title, body }, runGh),
   );
   await host.refresh();
-  await tell(`Ship ${branch}`, outcome);
+  await ch.tell(`Ship ${branch}`, outcome);
 }
 
-/** The release pull request of a lane whose cards are all done: the version bumped, the changelog dated and the lane
- *  shipped, on a new branch from the up-to-date default branch, in a temporary worktree. */
-async function release(version: string, host: ActionHost): Promise<void> {
+async function shipDirect(branch: string, cards: ShippedCard[], at: Checkout, state: State, host: ActionHost, ch: Channel): Promise<void> {
+  const push = state.work.hasOrigin;
+  const detail = [
+    `Merges ${branch} into ${at.base} in the main checkout (${at.repoRoot}), as a fast-forward when it can be one${push ? `, then pushes ${at.base} to ${REMOTE}` : ''}.`,
+    cards.length ? `Then ${cards.length === 1 ? 'its card is' : `its ${cards.length} cards are`} marked done on the board: ${cards.map((c) => `"${c.text}"`).join(', ')}.` : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  if (!(await confirm(ch, push, `Merge ${branch} into ${at.base}?`, detail, push ? 'Merge and push' : 'Merge'))) return;
+  const outcome = await progress(`merging ${branch}…`, () => mergeBranch({ repoRoot: at.repoRoot, branch, base: at.base, push }));
+  // Merged, even when the push after it failed: the cards are done.
+  const merged = outcome.done.length > 0;
+  if (merged && cards.length && at.roadmap) {
+    const path = at.roadmap;
+    let finished = false;
+    await inRoadmapQueue(async () => {
+      finished = await changeRoadmap(path, (text) => ({ ok: true, text: finishBranch(text, branch) }), host, ch.refuse);
+    });
+    if (finished) outcome.done.push(`marked ${plural(cards.length, 'card')} done on the board`);
+  }
+  await host.refresh();
+  await ch.tell(`Ship ${branch}`, outcome);
+}
+
+/** Releases a lane whose cards are all done. `pr`: the release pull request (the version bumped and the changelog
+ *  dated), on a new branch from the up-to-date default branch, in a temporary worktree. `direct`: the release commit
+ *  on the default branch in the main checkout, and its tag, in one step. */
+async function release(version: string, host: ActionHost, ch: Channel = boardChannel): Promise<void> {
   await host.refreshLocal();
   const state = host.state();
   if (!state) return;
   const at = mainCheckout(state);
-  if (typeof at === 'string') return refuse(at);
+  if (typeof at === 'string') return ch.refuse(at);
   const lane = state.releases.roadmap.find((l) => !l.backlog && l.version === version);
-  if (!lane || !at.roadmap) return refuse(`ROADMAP.md has no ${version} release.`);
+  if (!lane || !at.roadmap) return ch.refuse(`${at.name} has no ${version} release.`);
   const step = releaseStep(lane, state);
   if (step?.step !== 'release') {
-    if (step?.step === 'review') return refuse(`The release pull request #${step.pr.number} is open already.`);
-    return refuse(step?.step === 'tag' ? `${version} merged already: tag it.` : `${version} is not ready to release: every card in it has to be done.`);
+    if (step?.step === 'review') return ch.refuse(`The release pull request #${step.pr.number} is open already.`);
+    if (step?.step === 'tag') return ch.refuse(state.work.delivery === 'direct' ? `${version} is shipped already: tag it.` : `${version} merged already: tag it.`);
+    return ch.refuse(`${version} is not ready to release: every card in it has to be done.`);
   }
+  if (state.work.delivery === 'direct') return releaseDirect(version, at, at.roadmap, state, host, ch);
+
   const problem = await publishProblem(state, at.repoRoot);
-  if (problem) return refuse(problem);
+  if (problem) return ch.refuse(problem);
   const branch = releaseBranch(version);
   const listed = await prsFrom(runGh, at.repoRoot, branch);
-  if (!listed.ok) return refuse(listed.error);
+  if (!listed.ok) return ch.refuse(listed.error);
   const existing = listed.prs.find((p) => p.state !== 'closed');
-  if (existing) return refuse(`${branch} already has pull request #${existing.number} (${existing.state}).`);
-  const before = await savedRoadmap(at.roadmap);
-  if (before === undefined) return;
-  // What merged since the last Pull is done in the release's ROADMAP.md too, as it is on the base already.
-  const shipped = setLaneStatus(finishMerged(before, mergedWork(state.releases.roadmap)), version, 'shipped');
-  if (!shipped.ok) return refuse(shipped.error);
-  const roadmapPath = at.roadmap;
+  if (existing) return ch.refuse(`${branch} already has pull request #${existing.number} (${existing.state}).`);
   const drafted = await progress(`preparing ${version}…`, () =>
-    draftRelease({ repoRoot: at.repoRoot, base: at.base, version, versionFiles: state.settings.releaseVersionFiles, roadmap: shipped.text, date: today() }),
+    draftRelease({ repoRoot: at.repoRoot, base: at.base, version, versionFiles: state.settings.releaseVersionFiles, date: today() }),
   );
-  if (!drafted.ok) return refuse(drafted.error);
+  if (!drafted.ok) return ch.refuse(drafted.error);
   const { draft } = drafted;
   const title = releaseTitle(version);
   const body = releaseBody(lane, draft.notes);
   const local = state.work.items.find((i) => i.isDefault)?.ahead ?? 0;
-  const go = 'Open release PR';
   const detail = [
     `Opens a pull request into ${at.base} from a new branch ${branch}, made from ${REMOTE}/${at.base} (${draft.baseSha.slice(0, 7)}) in a temporary worktree. This checkout is not touched.`,
     draft.files.map((f) => `${f.path}: ${f.change}`).join('\n'),
     local ? `${plural(local, 'commit')} on your local ${at.base} ${local === 1 ? 'is' : 'are'} not on ${REMOTE}, and not part of this release.` : '',
     `Title: ${title}`,
     `Body:\n${preview(body)}`,
-    `Once it merges, the lane offers to tag ${tagName(version)}.`,
+    `Once it merges, Pull marks ${version} shipped on the board, and the lane offers to tag ${tagName(version)}.`,
   ]
     .filter(Boolean)
     .join('\n\n');
-  if ((await vscode.window.showWarningMessage(`Release ${version}?`, { modal: true, detail }, go)) !== go) return;
-  if ((await roadmapNow(roadmapPath)) !== before) return refuse('ROADMAP.md changed while the confirmation was open. Release again to see it as it is now.');
+  if (!(await confirm(ch, true, `Release ${version}?`, detail, 'Open release PR'))) return;
   const outcome = await progress(`opening the ${version} pull request…`, () => openRelease(draft, title, body, runGh));
   await host.refresh();
-  await tell(`Release ${version}`, outcome);
+  await ch.tell(`Release ${version}`, outcome);
 }
 
-/** Tags the commit the release pull request merged as, and pushes the tag: only after a confirmation that says a
- *  tag may deploy. */
-async function tag(version: string, host: ActionHost): Promise<void> {
+async function releaseDirect(version: string, at: Checkout, path: string, state: State, host: ActionHost, ch: Channel): Promise<void> {
+  const push = state.work.hasOrigin;
+  const drafted = await progress(`preparing ${version}…`, () =>
+    draftDirect({ repoRoot: at.repoRoot, base: at.base, version, versionFiles: state.settings.releaseVersionFiles, date: today(), remote: push }),
+  );
+  if (!drafted.ok) return ch.refuse(drafted.error);
+  const { draft } = drafted;
+  // A board git tracks goes into the release commit, shipped; one it does not is marked shipped once the commit is made.
+  let before: string | undefined;
+  let roadmap: { path: string; text: string } | undefined;
+  if (await isTracked(at.repoRoot, at.name)) {
+    before = await savedRoadmap(path, at.name, ch);
+    if (before === undefined) return;
+    const shipped = setLaneStatus(before, version, 'shipped');
+    if (!shipped.ok) return ch.refuse(shipped.error);
+    roadmap = { path: at.name, text: shipped.text };
+  }
+  const tag = tagName(version);
+  const detail = [
+    `Commits "${releaseTitle(version)}" on ${at.base} in the main checkout (${at.repoRoot}), with these files only, and tags it ${tag}${push ? `; then pushes ${at.base} and ${tag} to ${REMOTE} together` : ''}.`,
+    [...draft.files.map((f) => `${f.path}: ${f.change}`), ...(roadmap ? [`${at.name}: ${version}: Status: shipped`] : [])].join('\n'),
+    roadmap ? '' : `${at.name} is not in git: ${version} is marked shipped on it once the commit is made.`,
+    draft.notes.length ? `Changelog:\n${preview(draft.notes.map((n) => `- ${n}`).join('\n'))}` : '',
+    push ? 'A pushed tag may deploy: release workflows often start on a new tag.' : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  if (!(await confirm(ch, push, `Release ${version}?`, detail, push ? `Release and push ${tag}` : 'Release'))) return;
+  if (roadmap && (await roadmapNow(path)) !== before) return ch.refuse(`${at.name} changed while the confirmation was open. Release again to see it as it is now.`);
+  const outcome = await progress(`releasing ${version}…`, () => commitRelease(draft, { ...(roadmap ? { roadmap } : {}), push }));
+  const committed = outcome.done.length > 0;
+  if (committed && roadmap) host.roadmapChanged(roadmap.text);
+  if (committed && !roadmap) {
+    let shipped = false;
+    await inRoadmapQueue(async () => {
+      shipped = await changeRoadmap(path, (text) => setLaneStatus(text, version, 'shipped'), host, ch.refuse);
+    });
+    if (shipped) outcome.done.push(`marked ${version} shipped on the board`);
+  }
+  await host.refresh();
+  await ch.tell(`Release ${version}`, outcome);
+}
+
+/** Tags a release that has none yet. `pr`: the commit the release pull request merged as, and pushes the tag.
+ *  `direct`: the default branch's tip, for a lane that says shipped, pushed when there is an origin. A tag that is
+ *  pushed asks first, with a word that it may deploy. */
+async function tag(version: string, host: ActionHost, ch: Channel = boardChannel): Promise<void> {
   const state = host.state();
   if (!state) return;
   const at = mainCheckout(state);
-  if (typeof at === 'string') return refuse(at);
+  if (typeof at === 'string') return ch.refuse(at);
+  const direct = state.work.delivery === 'direct';
   const lane = state.releases.roadmap.find((l) => !l.backlog && l.version === version);
-  if (!lane || releaseStep(lane, state)?.step !== 'tag') return refuse(`${version} is not merged yet, or is tagged already.`);
-  const problem = await publishProblem(state, at.repoRoot);
-  if (problem) return refuse(problem);
-  const found = await progress(`finding the ${version} merge…`, () => findRelease(runGh, at.repoRoot, at.base, version));
-  if (!found.ok) return refuse(found.error);
+  if (!lane || releaseStep(lane, state)?.step !== 'tag') return ch.refuse(direct ? `${version} is not shipped yet, or is tagged already.` : `${version} is not merged yet, or is tagged already.`);
   const name = tagName(version);
-  const go = `Tag and push ${name}`;
+  if (direct) {
+    const push = state.work.hasOrigin;
+    const found = await findDirectTag(at.repoRoot, at.base, version, push);
+    if (!found.ok) return ch.refuse(found.error);
+    const detail = `Tags ${found.sha.slice(0, 7)}, the tip of ${at.base}, as ${name} (an annotated tag, "${releaseTitle(version)}")${push ? `, and pushes the tag to ${REMOTE}.\n\nA pushed tag may deploy: release workflows often start on a new tag.` : '.'}`;
+    if (!(await confirm(ch, push, push ? `Tag ${name} and push it?` : `Tag ${name}?`, detail, push ? `Tag and push ${name}` : `Tag ${name}`))) return;
+    const outcome = await progress(`tagging ${name}…`, () => pushTag(at.repoRoot, version, found.sha, push));
+    await host.refresh();
+    await ch.tell(`Tag ${name}`, outcome);
+    return;
+  }
+  const problem = await publishProblem(state, at.repoRoot);
+  if (problem) return ch.refuse(problem);
+  const found = await progress(`finding the ${version} merge…`, () => findRelease(runGh, at.repoRoot, at.base, version));
+  if (!found.ok) return ch.refuse(found.error);
   const detail = `Tags ${found.sha.slice(0, 7)}, the merge of the release pull request #${found.pr} into ${at.base}, as ${name} (an annotated tag, "${releaseTitle(version)}"), and pushes the tag to ${REMOTE}.\n\nA pushed tag may deploy: release workflows often start on a new tag. Cockpit never tags on its own.`;
-  if ((await vscode.window.showWarningMessage(`Tag ${name} and push it?`, { modal: true, detail }, go)) !== go) return;
+  if (!(await confirm(ch, true, `Tag ${name} and push it?`, detail, `Tag and push ${name}`))) return;
   const outcome = await progress(`tagging ${name}…`, () => pushTag(at.repoRoot, version, found.sha));
   await host.refresh();
-  await tell(`Tag ${name}`, outcome);
+  await ch.tell(`Tag ${name}`, outcome);
 }
 
-/** Brings the main checkout up to date after a merge: ROADMAP.md first reads as the merge has it, so the autostash
- *  puts back only the board's edits made since. This is the only place Cockpit writes what merged into the file:
- *  doing it as soon as a merge shows up would leave ROADMAP.md changed under a plain `git pull`, which then refuses. */
-async function pull(host: ActionHost): Promise<void> {
+/** Brings the main checkout up to date after a merge on GitHub: the board first reads as the merge has it (the
+ *  merged branches' cards done, the merged releases shipped), then the default branch is pulled. */
+async function pull(host: ActionHost, ch: Channel = boardChannel): Promise<void> {
   const state = host.state();
   if (!state) return;
   const at = mainCheckout(state);
-  if (typeof at === 'string') return refuse(at);
-  if (!state.work.items.some((i) => i.isDefault && i.worktreePath === at.repoRoot)) return refuse(`The main checkout is not on ${at.base}: switch to it to pull.`);
-  if (!(await syncMerged(host))) return;
+  if (typeof at === 'string') return ch.refuse(at);
+  if (!state.work.hasOrigin) return ch.refuse(`This repository has no ${REMOTE} to pull from.`);
+  if (!state.work.items.some((i) => i.isDefault && i.worktreePath === at.repoRoot)) return ch.refuse(`The main checkout is not on ${at.base}: switch to it to pull.`);
+  if (!(await syncMerged(host, ch))) return;
   const outcome = await progress(`pulling ${at.base}…`, () => pullDefault(at.repoRoot));
   await host.refreshLocal();
-  if (outcome.ok) vscode.window.setStatusBarMessage(`Cockpit: ${at.base} ${outcome.done.join(', ')}`, 4000);
-  else await tell(`Pull ${at.base}`, outcome);
+  if (outcome.ok && ch.via === 'board') vscode.window.setStatusBarMessage(`Cockpit: ${at.base} ${outcome.done.join(', ')}`, 4000);
+  else await ch.tell(`Pull ${at.base}`, outcome);
 }
 
-/** Makes the main checkout's ROADMAP.md read as what merged (publish.ts withMerged marks it on the board): the cards
- *  of a branch whose pull request merged are done and unlinked, and a release whose pull request merged is shipped.
- *  That is the text the merge put on the default branch, so the pull right after it leaves ROADMAP.md clean. False,
- *  after saying why, when the pull is not to go ahead: ROADMAP.md has unsaved edits in an editor, or could not be
- *  written. */
-async function syncMerged(host: ActionHost): Promise<boolean> {
+/** Makes the board read as what merged (publish.ts withMerged marks it in the State): the cards of a branch whose pull
+ *  request merged are done and unlinked, and a release whose pull request merged is shipped. False, after saying why,
+ *  when the pull is not to go ahead: the board has unsaved edits in an editor, or could not be written. */
+async function syncMerged(host: ActionHost, ch: Channel): Promise<boolean> {
   const state = host.state();
   const at = state && mainCheckout(state);
   if (!state || !at || typeof at === 'string' || !at.roadmap) return true;
   const work = mergedWork(state.releases.roadmap);
   if (work.branches.length === 0 && work.versions.length === 0) return true;
   const path = at.roadmap;
+  const name = at.name;
   let synced = false;
   await inRoadmapQueue(async () => {
-    if ((await savedRoadmap(path)) === undefined) return;
-    synced = await changeRoadmap(path, (text) => ({ ok: true, text: finishMerged(text, work) }), host);
+    if ((await savedRoadmap(path, name, ch)) === undefined) return;
+    synced = await changeRoadmap(path, (text) => ({ ok: true, text: finishMerged(text, work) }), host, ch.refuse);
   });
   return synced;
 }

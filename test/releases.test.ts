@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -120,7 +120,7 @@ describe('readReleases on a real repository', () => {
   };
 
   beforeAll(() => {
-    base = mkdtempSync(join(tmpdir(), 'cockpit-rel-'));
+    base = realpathSync(mkdtempSync(join(tmpdir(), 'cockpit-rel-')));
   });
   afterAll(() => rmSync(base, { recursive: true, force: true }));
 
@@ -166,9 +166,54 @@ describe('readReleases on a real repository', () => {
   it('is unavailable with nothing to show, and works outside git', async () => {
     const empty = join(base, 'empty');
     mkdirSync(empty);
-    const roadmapPath = join(empty, 'ROADMAP.md');
-    expect(await readReleases(empty)).toEqual({ available: false, roadmapPath, roadmapExists: false, roadmap: [], changelog: [] });
+    // No board yet: it would be created in .cockpit/.
+    const roadmapPath = join(empty, '.cockpit', 'roadmap.md');
+    const none = { roadmapPath, roadmapName: '.cockpit/roadmap.md', roadmapExists: false, roadmap: [], changelog: [] };
+    expect(await readReleases(empty)).toEqual({ available: false, ...none });
     writeFileSync(join(empty, 'CHANGELOG.md'), '# Changelog\n');
-    expect(await readReleases(empty)).toEqual({ available: true, roadmapPath, roadmapExists: false, roadmap: [], changelog: [] });
+    expect(await readReleases(empty)).toEqual({ available: true, ...none });
+  });
+
+  it('reads the board from the main checkout, whichever worktree is open: .cockpit/roadmap.md, else ROADMAP.md, else the config', async () => {
+    const repo = join(base, 'board');
+    mkdirSync(repo);
+    writeFileSync(join(repo, 'ROADMAP.md'), '## 1.0.0\n\n- [ ] legacy\n');
+    sh(repo, ['init', '-q', '-b', 'main']);
+    commit(repo, 'one');
+    const wt = join(base, 'board-feat');
+    sh(repo, ['worktree', 'add', '-q', '-b', 'feat', wt]);
+    // The worktree's own ROADMAP.md is not the board: the main checkout's is.
+    writeFileSync(join(wt, 'ROADMAP.md'), '## 9.0.0\n\n- [ ] on the branch\n');
+    const board = async () => {
+      const r = (await loadGit(wt, Date.now())).releases;
+      return { name: r.roadmapName, path: r.roadmapPath, cards: r.roadmap.flatMap((l) => l.items.map((i) => i.text)) };
+    };
+    expect(await board()).toEqual({ name: 'ROADMAP.md', path: join(repo, 'ROADMAP.md'), cards: ['legacy'] });
+
+    mkdirSync(join(repo, '.cockpit'));
+    writeFileSync(join(repo, '.cockpit', 'roadmap.md'), '## 1.1.0\n\n- [ ] new home\n');
+    expect(await board()).toEqual({ name: '.cockpit/roadmap.md', path: join(repo, '.cockpit', 'roadmap.md'), cards: ['new home'] });
+
+    mkdirSync(join(repo, 'docs'));
+    writeFileSync(join(repo, 'docs', 'plan.md'), '## 2.0.0\n\n- [ ] pointed at\n');
+    writeFileSync(join(repo, '.cockpit', 'config.json'), '{ "roadmap": "docs/plan.md" }');
+    expect(await board()).toEqual({ name: 'docs/plan.md', path: join(repo, 'docs', 'plan.md'), cards: ['pointed at'] });
+  });
+
+  it('delivers directly without an origin, through pull requests with one, unless the config says', async () => {
+    const repo = join(base, 'delivery');
+    mkdirSync(repo);
+    sh(repo, ['init', '-q', '-b', 'main']);
+    commit(repo, 'one');
+    const work = async () => {
+      const { git } = await loadGit(repo, Date.now());
+      return { hasOrigin: git.hasOrigin, delivery: git.delivery };
+    };
+    expect(await work()).toEqual({ hasOrigin: false, delivery: 'direct' });
+    sh(repo, ['remote', 'add', 'origin', join(base, 'nowhere.git')]);
+    expect(await work()).toEqual({ hasOrigin: true, delivery: 'pr' });
+    mkdirSync(join(repo, '.cockpit'));
+    writeFileSync(join(repo, '.cockpit', 'config.json'), '{ "delivery": "direct" }');
+    expect(await work()).toEqual({ hasOrigin: true, delivery: 'direct' });
   });
 });

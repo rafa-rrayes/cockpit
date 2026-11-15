@@ -36,26 +36,6 @@ export function prBody(cards: ShippedCard[], report: string | undefined): string
   return parts.join('\n\n');
 }
 
-/** The message of the commit that carries ROADMAP.md on the branch. */
-export function roadmapCommitMessage(cards: ShippedCard[]): string {
-  const first = cards[0];
-  if (!first) return 'Roadmap: the board as it is on the main checkout';
-  if (cards.length === 1) return cut(`Roadmap: ${oneLine(first.text)} done`, TITLE_MAX);
-  return `Roadmap: ${cards.length} cards done`;
-}
-
-const BOARD_LISTED = 5;
-
-/** What Ship's confirmation says about the board changes it carries beyond the branch's own cards (roadmap.ts
- *  boardChanges, against `against`): nothing when there are none, else how many and the first few. */
-export function otherBoardChanges(changes: string[], against: string): string {
-  const n = changes.length;
-  if (n === 0) return '';
-  const listed = changes.slice(0, BOARD_LISTED).map((c) => `- ${c}`);
-  if (n > BOARD_LISTED) listed.push(`- and ${n - BOARD_LISTED} more`);
-  return [`It also carries ${n === 1 ? '1 other board change' : `${n} other board changes`}, against ROADMAP.md on ${against}:`, ...listed].join('\n');
-}
-
 // ───────────────────────────── Release ─────────────────────────────
 
 export const releaseBranch = (version: string): string => `release-${version}`;
@@ -127,8 +107,7 @@ const SHIPPED = /\b(shipped|released)\b/i;
 
 /** The board as it reads once what merged on GitHub is pulled: the cards linked to a branch whose pull request merged
  *  are done, and a release whose release pull request merged is shipped, each marked `merged`. Only the State says so:
- *  ROADMAP.md is rewritten to match by Cockpit's Pull, right before it pulls, so a plain `git pull` is never kept
- *  from running by an edit Cockpit made. */
+ *  the board's file is rewritten to match by Cockpit's Pull, right before it pulls (`pr` delivery). */
 export function withMerged(lanes: ReleasePlan[], items: WorkItem[]): ReleasePlan[] {
   const merged = new Set(items.filter((i) => !i.isDefault && i.pr?.state === 'merged').map((i) => i.branch));
   if (merged.size === 0) return lanes;
@@ -148,9 +127,11 @@ export function mergedWork(lanes: ReleasePlan[]): MergedWork {
 }
 
 /** Where a release lane stands, from the board and what git and GitHub show:
- *  - release: every card is done; its release pull request can be prepared;
- *  - review: the release pull request is open;
- *  - tag: it merged (or the lane says "shipped") and no tag at or after its version exists yet.
+ *  - release: every card is done; its release pull request can be prepared (`direct`: its release commit and tag
+ *    made, in one step);
+ *  - review: the release pull request is open (`pr` only);
+ *  - tag: it merged (or the lane says "shipped") and no tag at or after its version exists yet (`direct`: only a
+ *    lane that says shipped, whose tag goes on the default branch's tip).
  *  Nothing for the backlog, an empty lane, a lane with open cards, or one already tagged. */
 export type ReleaseStep = { step: 'release' } | { step: 'review'; pr: PullRequest } | { step: 'tag' };
 
@@ -165,6 +146,10 @@ export function releaseStep(lane: ReleasePlan, state: State): ReleaseStep | unde
   if (lane.backlog || lane.items.length === 0 || !isReleaseVersion(lane.version)) return undefined;
   const latest = state.releases.latestTag;
   if (latest && compareVersions(latest, lane.version) >= 0) return undefined;
+  if (state.work.delivery === 'direct') {
+    if (SHIPPED.test(lane.status ?? '')) return { step: 'tag' };
+    return lane.items.every((i) => i.status === 'done') ? { step: 'release' } : undefined;
+  }
   const pr = state.work.items.find((i) => i.branch === releaseBranch(lane.version))?.pr;
   if (pr?.state === 'merged' || SHIPPED.test(lane.status ?? '')) return { step: 'tag' };
   if (pr?.state === 'open') return { step: 'review', pr };
