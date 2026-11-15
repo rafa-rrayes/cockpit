@@ -31,7 +31,9 @@ Status: shipped
 
 - [x] Shipped lanes each show their own tag, not only the newest one
 
-## Backlog
+## 0.3.2
 
+- [ ] Release bumps package-lock.json along with package.json <!-- cockpit:worktree-0.3.2-release-bumps-package-lock -->
 - [ ] First real Ship → merge → Pull → Release → Tag against GitHub (only a fake gh so far)
-- [ ] Release bumps package-lock.json along with package.json
+
+## Backlog
