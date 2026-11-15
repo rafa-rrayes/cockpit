@@ -31,8 +31,8 @@
 - Ship…: pushes a finished branch and opens its pull request through `gh`, after a dialog showing the title and the
   body (the cards and the Claude's report). `ROADMAP.md`, with the branch's cards done, is committed on the branch,
   so the board travels with the merge.
-- When a linked pull request merges, the main checkout's `ROADMAP.md` reads as the merge has it (cards done and
-  unlinked, a merged release shipped), so **Pull main** (in Catch up) leaves it clean.
+- When a linked pull request merges, the board shows its cards done (a merged release shipped) without touching
+  `ROADMAP.md`, so a plain `git pull` still runs; **Pull main** (in Catch up) writes it first and leaves it clean.
 - Release…: on a lane whose cards are all done, opens a `release-X` pull request that bumps the version, dates the
   changelog and marks the lane shipped, made in a temporary worktree from `origin`. Once it merges, **Tag vX…** tags
   the merge commit and pushes the tag, after a dialog that says a tag may deploy.

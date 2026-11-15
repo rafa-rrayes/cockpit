@@ -1,8 +1,9 @@
 // What Ship and Release send out, as text: pull request titles and bodies, commit messages, the version bump, the
 // dated changelog heading, and where a release lane stands. Pure, so every word that leaves the machine is
 // unit-tested; src/ship.ts runs the commands. Kept free of `vscode` and node modules: the webview imports
-// releaseStep.
-import type { ReleasePlan, State, PullRequest } from './model';
+// releaseStep, and compose withMerged.
+import type { MergedWork } from './data/roadmap';
+import type { ReleasePlan, State, PullRequest, WorkItem } from './model';
 
 /** A card as a pull request names it: its text and its lane. */
 export interface ShippedCard {
@@ -110,14 +111,27 @@ export function compareVersions(a: string, b: string): number {
   return x.pre < y.pre ? -1 : 1;
 }
 
-/** What merged on GitHub and still reads as open in ROADMAP.md: branches with linked cards whose pull request merged,
- *  and releases whose release pull request merged while their lane is not "shipped". The host then makes the main
- *  checkout's ROADMAP.md read as the merged one does, so the pull after the merge leaves it clean. */
-export function mergedWork(state: State): { branches: string[]; versions: string[] } {
-  const merged = new Set(state.work.items.filter((i) => !i.isDefault && i.pr?.state === 'merged').map((i) => i.branch));
-  const lanes = state.releases.roadmap;
-  const branches = [...new Set(lanes.flatMap((l) => l.items.flatMap((i) => (i.branch && merged.has(i.branch) ? [i.branch] : []))))];
-  const versions = lanes.filter((l) => !l.backlog && !/\b(shipped|released)\b/i.test(l.status ?? '') && merged.has(releaseBranch(l.version))).map((l) => l.version);
+const SHIPPED = /\b(shipped|released)\b/i;
+
+/** The board as it reads once what merged on GitHub is pulled: the cards linked to a branch whose pull request merged
+ *  are done, and a release whose release pull request merged is shipped, each marked `merged`. Only the State says so:
+ *  ROADMAP.md is rewritten to match by Cockpit's Pull, right before it pulls, so a plain `git pull` is never kept
+ *  from running by an edit Cockpit made. */
+export function withMerged(lanes: ReleasePlan[], items: WorkItem[]): ReleasePlan[] {
+  const merged = new Set(items.filter((i) => !i.isDefault && i.pr?.state === 'merged').map((i) => i.branch));
+  if (merged.size === 0) return lanes;
+  return lanes.map((lane) => {
+    const cards = lane.items.map((i) => (i.branch && merged.has(i.branch) ? { ...i, status: 'done' as const, merged: true } : i));
+    const shipped = !lane.backlog && !SHIPPED.test(lane.status ?? '') && merged.has(releaseBranch(lane.version));
+    return shipped ? { ...lane, status: 'shipped', merged: true, items: cards } : { ...lane, items: cards };
+  });
+}
+
+/** What withMerged marked: the branches whose cards ROADMAP.md still has open and linked, and the releases it does
+ *  not say are shipped. finishMerged makes the file read as the merges have it. */
+export function mergedWork(lanes: ReleasePlan[]): MergedWork {
+  const branches = [...new Set(lanes.flatMap((l) => l.items.flatMap((i) => (i.merged && i.branch ? [i.branch] : []))))];
+  const versions = lanes.filter((l) => l.merged).map((l) => l.version);
   return { branches, versions };
 }
 
@@ -133,7 +147,7 @@ export function releaseStep(lane: ReleasePlan, state: State): ReleaseStep | unde
   const latest = state.releases.latestTag;
   if (latest && compareVersions(latest, lane.version) >= 0) return undefined;
   const pr = state.work.items.find((i) => i.branch === releaseBranch(lane.version))?.pr;
-  if (pr?.state === 'merged' || /\b(shipped|released)\b/i.test(lane.status ?? '')) return { step: 'tag' };
+  if (pr?.state === 'merged' || SHIPPED.test(lane.status ?? '')) return { step: 'tag' };
   if (pr?.state === 'open') return { step: 'review', pr };
   return lane.items.every((i) => i.status === 'done') ? { step: 'release' } : undefined;
 }

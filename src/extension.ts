@@ -3,7 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import { basename, join } from 'node:path';
 import * as vscode from 'vscode';
-import { type ActionHost, handleMessage, syncMerged } from './actions';
+import { type ActionHost, handleMessage } from './actions';
 import type { HostMessage, State } from './model';
 import { defaultClaudeDir } from './sources';
 import { Store } from './store';
@@ -73,11 +73,7 @@ class CockpitPanel implements vscode.Disposable {
     private readonly windows: WindowRegistry,
   ) {
     this.disposables.push(
-      store.onDidChange(() => {
-        this.post();
-        // A pull request that merged is on the board now: ROADMAP.md follows it.
-        void syncMerged(this.host).catch((e: unknown) => void vscode.window.showErrorMessage(`Cockpit: ${e instanceof Error ? e.message : String(e)}`));
-      }),
+      store.onDidChange(() => this.post()),
     );
     // A Cockpit tab that is visible after a reload is revived right after activation: wait for it instead of
     // opening a second one. A restored tab in the background is only revived when shown, so it is replaced.

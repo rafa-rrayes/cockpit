@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildActivity, buildAttention, buildItems, buildProjects, compose, itemForSession, type GitResult, type GithubResult } from '../src/compose';
+import { parseRoadmap } from '../src/data/roadmap';
 import type { CiRun, ClaudeSession, PullRequest, WorkItem } from '../src/model';
 
 const NOW = Date.UTC(2026, 10, 13, 12, 0, 0);
@@ -280,6 +281,17 @@ describe('compose', () => {
     expect(state.work.github).toBeUndefined();
     expect(state.generatedAt).toBe(NOW);
     expect(state.workspace).toBeUndefined();
+  });
+
+  it('shows the cards of a branch whose pull request merged as done, without ROADMAP.md saying so yet', () => {
+    const roadmap = parseRoadmap('## 0.2.0\n\n- [~] X <!-- cockpit:feature-x -->\n- [ ] Y\n');
+    const releases = { available: true, roadmap, changelog: [] };
+    const state = compose({ now: NOW, sessions: [], git: git(), github: { prs: [pr(1, 'feature-x', { state: 'merged' })], ciRuns: [] }, releases });
+    expect(state.releases.roadmap[0]?.items.map((i) => [i.text, i.status, i.branch, i.merged])).toEqual([
+      ['X', 'done', 'feature-x', true],
+      ['Y', 'todo', undefined, undefined],
+    ]);
+    expect(releases.roadmap[0]?.items[0]?.status).toBe('doing');
   });
 
   it('is plain JSON', () => {

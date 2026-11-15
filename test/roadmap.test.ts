@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { applyRoadmapEdit, finishBranch, linkCard, nextMinor, parseRoadmap, setLaneStatus, starterRoadmap } from '../src/data/roadmap';
+import { applyRoadmapEdit, finishBranch, finishMerged, linkCard, nextMinor, parseRoadmap, setLaneStatus, starterRoadmap } from '../src/data/roadmap';
 import { parseRoadmapEdit } from '../src/guards';
 import type { RoadmapEdit } from '../src/model';
 
@@ -225,6 +225,12 @@ describe('branch links', () => {
     const out = finishBranch(two, 'worktree-1.2.0-video-feed');
     expect(out).toBe(two.replace('- [~] Video feed <!-- cockpit:worktree-1.2.0-video-feed -->', '- [x] Video feed').replace('- [ ] Tablet layout <!-- cockpit:worktree-1.2.0-video-feed -->', '- [x] Tablet layout'));
     expect(finishBranch(DOC, 'nothing-linked')).toBe(DOC);
+  });
+
+  it('finishes what merged: the cards of every merged branch, and each merged release shipped', () => {
+    const text = '## 0.2.0\n\n- [~] a <!-- cockpit:wa -->\n- [~] b <!-- cockpit:wb -->\n\n## 0.3.0\n\n- [ ] c <!-- cockpit:wc -->\n';
+    expect(finishMerged(text, { branches: ['wa', 'wc'], versions: ['0.2.0', '9.9.9'] })).toBe('## 0.2.0\nStatus: shipped\n\n- [x] a\n- [~] b <!-- cockpit:wb -->\n\n## 0.3.0\n\n- [x] c\n');
+    expect(finishMerged(text, { branches: [], versions: [] })).toBe(text);
   });
 
   it("sets a release's status, rewriting the line it has or adding one under the heading", () => {

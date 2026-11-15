@@ -14,6 +14,7 @@ import type {
   WorkItem,
 } from './model';
 import { sortItems } from './data/git';
+import { withMerged } from './publish';
 import { defaultSettings } from './settings';
 
 export interface GitResult {
@@ -283,7 +284,7 @@ export function compose(input: ComposeInput): State {
       items,
       ciRuns: github?.ciRuns ?? [],
     },
-    releases: input.releases ?? noReleases(),
+    releases: input.releases ? { ...input.releases, roadmap: withMerged(input.releases.roadmap, items) } : noReleases(),
     activity: buildActivity(sessions, projects, github, input.commits ?? []),
     settings: input.settings ?? defaultSettings,
   };

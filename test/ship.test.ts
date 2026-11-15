@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { applyRoadmapEdit, finishBranch, linkCard, parseRoadmap, setLaneStatus } from '../src/data/roadmap';
+import { applyRoadmapEdit, finishBranch, finishMerged, linkCard, parseRoadmap, setLaneStatus } from '../src/data/roadmap';
 import type { RunResult } from '../src/data/git';
 import { prBody, prTitle, releaseBody, releaseTitle, roadmapCommitMessage } from '../src/publish';
 import { draftRelease, findRelease, type Gh, openRelease, prsFrom, pullDefault, pushTag, shipBranch } from '../src/ship';
@@ -114,9 +114,11 @@ describe('Ship: the roadmap travels in the pull request', () => {
     // While the pull request is open, main's working file keeps the card in progress with its link.
     expect(read(roadmapPath())).toBe(text);
 
-    // GitHub squash-merges A; Cockpit sees it and finishes A's cards in main's working file; then the pull.
+    // GitHub squash-merges A. Until Pull, main's working file stays as it was (the board only shows A's cards done);
+    // Pull first finishes A's cards in it, then pulls.
     merge(A, 'squash');
-    text = finishBranch(read(roadmapPath()), A);
+    expect(read(roadmapPath())).toBe(text);
+    text = finishMerged(read(roadmapPath()), { branches: [A], versions: [] });
     writeFileSync(roadmapPath(), text);
     expect(await pullDefault(repo)).toEqual({ ok: true, done: ['pulled'] });
     expect(status(repo)).toBe('');
@@ -128,7 +130,7 @@ describe('Ship: the roadmap travels in the pull request', () => {
     const shippedB = await shipBranch({ worktree: wt('b'), branch: B, base: 'main', roadmap: finishBranch(text, B), commitMessage: roadmapCommitMessage(cardsB), title: prTitle(cardsB, ''), body: prBody(cardsB, undefined) }, fakeGh().gh);
     expect(shippedB.done).toEqual([`merged origin/main into ${B}`, `committed ROADMAP.md on ${B}`, `pushed ${B} to origin`, 'opened https://github.com/o/r/pull/1']);
     merge(B, 'merge');
-    writeFileSync(roadmapPath(), finishBranch(read(roadmapPath()), B));
+    writeFileSync(roadmapPath(), finishMerged(read(roadmapPath()), { branches: [B], versions: [] }));
     expect((await pullDefault(repo)).ok).toBe(true);
     expect(status(repo)).toBe('');
     expect(parseRoadmap(read(roadmapPath())).map((l) => [l.version, ...l.items.map((i) => `${i.status}:${i.text}:${i.branch ?? ''}`)])).toEqual([
@@ -209,7 +211,9 @@ describe('Release and Tag', () => {
     expect(await findRelease(fakeGh({ 'release-0.2.0': [{ number: 9, state: 'OPEN', url: 'u', mergeCommit: null }] }).gh, repo, 'main', '0.2.0')).toMatchObject({ ok: false });
 
     const sha = merge('release-0.2.0', 'merge');
-    writeFileSync(roadmapPath(), roadmap);
+    // Pull marks the merged release shipped in main's working file, as the merge has it, then pulls.
+    writeFileSync(roadmapPath(), finishMerged(read(roadmapPath()), { branches: [], versions: ['0.2.0'] }));
+    expect(read(roadmapPath())).toBe(roadmap);
     expect((await pullDefault(repo)).ok).toBe(true);
     expect(status(repo)).toBe('');
 

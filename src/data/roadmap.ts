@@ -9,7 +9,8 @@
 //   - [~] Video feed                  in progress (also "[/]" and "[-]")
 //   - [x] Seasons                     done
 //   - [~] Feed <!-- cockpit:worktree-1.2.0-feed -->
-//                                     the branch working on the card, recorded by Start Claude, dropped once it merges;
+//                                     the branch working on the card, recorded by Start Claude, dropped by the Pull
+//                                     after its merge;
 //                                     the comment is not part of the card's text and every edit keeps it
 //   ## Backlog                       work not yet in a release (also "Later", "Unscheduled", "Someday", "Ideas")
 //   Other headings ("## Notes", "## 1. Foundations": a version has a dot or a "v") end the lane above and are
@@ -305,7 +306,7 @@ export function applyRoadmapEdit(text: string, edit: RoadmapEdit): EditResult {
 }
 
 // ───────────────────────────── Branch links and shipping ─────────────────────────────
-// Not edits the webview can ask for: the host makes them when it starts a Claude, ships a branch, sees it merged
+// Not edits the webview can ask for: the host makes them when it starts a Claude, ships a branch, pulls what merged
 // or prepares a release.
 
 /** Links the card to `branch` (replacing any link it had), moving it to `status` too when one is given. */
@@ -331,6 +332,24 @@ export function finishBranch(text: string, branch: string): string {
     }
   }
   return lines.join(doc.eol);
+}
+
+/** Branches whose pull request merged and releases whose release pull request merged (publish.ts mergedWork). */
+export interface MergedWork {
+  branches: string[];
+  versions: string[];
+}
+
+/** The text as the merges have it: every card of the merged branches done and unlinked, and the merged releases
+ *  shipped. That is what the default branch's ROADMAP.md reads after them, so pulling them leaves the file clean. */
+export function finishMerged(text: string, work: MergedWork): string {
+  let out = text;
+  for (const b of work.branches) out = finishBranch(out, b);
+  for (const v of work.versions) {
+    const r = setLaneStatus(out, v, 'shipped');
+    if (r.ok) out = r.text;
+  }
+  return out;
 }
 
 /** The release's "Status:" set to `value`: the line it has rewritten, or one added under its heading (after a

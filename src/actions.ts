@@ -12,7 +12,7 @@ import * as vscode from 'vscode';
 import { markOf, shipProblem } from './catchup';
 import { removeMerged } from './clean';
 import { runGh } from './data/github';
-import { type EditResult, applyRoadmapEdit, finishBranch, linkCard, parseRoadmap, setLaneStatus, starterRoadmap } from './data/roadmap';
+import { type EditResult, applyRoadmapEdit, finishBranch, finishMerged, linkCard, parseRoadmap, setLaneStatus, starterRoadmap } from './data/roadmap';
 import { cleanCandidates, isHttpsUrl, isSessionId, knownFolders, knownUrls, parseMessage } from './guards';
 import { type LaunchCard, launchArgs, launchEnv, sessionName, worktreeName } from './launch';
 import type { CatchUpMark, ClaudeSession, LaunchOptions, RoadmapEdit, State, WorkItem } from './model';
@@ -327,8 +327,9 @@ async function tell(what: string, outcome: Outcome): Promise<void> {
 }
 
 /** Pushes a finished branch and opens its pull request, after a confirmation that shows the title and the body. The
- *  board travels with it: ROADMAP.md as the main checkout has it, the branch's cards ticked and unlinked, is
- *  committed on the branch, so the merge brings it to the default branch and the main checkout never commits. */
+ *  board travels with it: ROADMAP.md as the main checkout has it, the branch's cards ticked and unlinked (and what
+ *  merged since the last Pull finished too), is committed on the branch, so the merge brings it to the default branch
+ *  and the main checkout never commits. */
 async function ship(branch: string, host: ActionHost): Promise<void> {
   await host.refreshLocal();
   const state = host.state();
@@ -351,7 +352,8 @@ async function ship(branch: string, host: ActionHost): Promise<void> {
     before = await savedRoadmap(at.roadmap);
     if (before === undefined) return;
   }
-  const roadmap = before === undefined ? undefined : finishBranch(before, branch);
+  const merged = mergedWork(state.releases.roadmap);
+  const roadmap = before === undefined ? undefined : finishBranch(finishMerged(before, merged), branch);
   const report = item.sessionIds.map((id) => state.sessions[id]?.report).find(Boolean);
   const title = prTitle(cards, item.lastCommitSubject ?? branch);
   const body = prBody(cards, report);
@@ -399,7 +401,8 @@ async function release(version: string, host: ActionHost): Promise<void> {
   if (existing) return refuse(`${branch} already has pull request #${existing.number} (${existing.state}).`);
   const before = await savedRoadmap(at.roadmap);
   if (before === undefined) return;
-  const shipped = setLaneStatus(before, version, 'shipped');
+  // What merged since the last Pull is done in the release's ROADMAP.md too, as it is on the base already.
+  const shipped = setLaneStatus(finishMerged(before, mergedWork(state.releases.roadmap)), version, 'shipped');
   if (!shipped.ok) return refuse(shipped.error);
   const roadmapPath = at.roadmap;
   const drafted = await progress(`preparing ${version}…`, () =>
@@ -451,55 +454,39 @@ async function tag(version: string, host: ActionHost): Promise<void> {
 }
 
 /** Brings the main checkout up to date after a merge: ROADMAP.md first reads as the merge has it, so the autostash
- *  puts back only the board's edits made since. */
+ *  puts back only the board's edits made since. This is the only place Cockpit writes what merged into the file:
+ *  doing it as soon as a merge shows up would leave ROADMAP.md changed under a plain `git pull`, which then refuses. */
 async function pull(host: ActionHost): Promise<void> {
   const state = host.state();
   if (!state) return;
   const at = mainCheckout(state);
   if (typeof at === 'string') return refuse(at);
   if (!state.work.items.some((i) => i.isDefault && i.worktreePath === at.repoRoot)) return refuse(`The main checkout is not on ${at.base}: switch to it to pull.`);
-  await syncMerged(host);
+  if (!(await syncMerged(host))) return;
   const outcome = await progress(`pulling ${at.base}…`, () => pullDefault(at.repoRoot));
   await host.refreshLocal();
   if (outcome.ok) vscode.window.setStatusBarMessage(`Cockpit: ${at.base} ${outcome.done.join(', ')}`, 4000);
   else await tell(`Pull ${at.base}`, outcome);
 }
 
-let syncing: Promise<void> | undefined;
-
-/** Makes the main checkout's ROADMAP.md read as what merged: the cards of a branch whose pull request merged are done
- *  and unlinked, and a release whose pull request merged is shipped. That is the text the merge put on the default
- *  branch, so the pull after it leaves ROADMAP.md clean. Called on every new State; it rarely has anything to do,
- *  and waits while ROADMAP.md has unsaved edits in an editor. */
-export function syncMerged(host: ActionHost): Promise<void> {
-  if (syncing) return syncing;
+/** Makes the main checkout's ROADMAP.md read as what merged (publish.ts withMerged marks it on the board): the cards
+ *  of a branch whose pull request merged are done and unlinked, and a release whose pull request merged is shipped.
+ *  That is the text the merge put on the default branch, so the pull right after it leaves ROADMAP.md clean. False,
+ *  after saying why, when the pull is not to go ahead: ROADMAP.md has unsaved edits in an editor, or could not be
+ *  written. */
+async function syncMerged(host: ActionHost): Promise<boolean> {
   const state = host.state();
   const at = state && mainCheckout(state);
-  if (!state || !at || typeof at === 'string' || !at.roadmap) return Promise.resolve();
-  const { branches, versions } = mergedWork(state);
-  if (branches.length === 0 && versions.length === 0) return Promise.resolve();
+  if (!state || !at || typeof at === 'string' || !at.roadmap) return true;
+  const work = mergedWork(state.releases.roadmap);
+  if (work.branches.length === 0 && work.versions.length === 0) return true;
   const path = at.roadmap;
-  syncing = inRoadmapQueue(async () => {
-    const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(path));
-    if (doc.isDirty) return;
-    const changed = await changeRoadmap(
-      path,
-      (text) => {
-        let out = text;
-        for (const b of branches) out = finishBranch(out, b);
-        for (const v of versions) {
-          const r = setLaneStatus(out, v, 'shipped');
-          if (r.ok) out = r.text;
-        }
-        return { ok: true, text: out };
-      },
-      host,
-    );
-    if (changed) vscode.window.setStatusBarMessage('Cockpit: ROADMAP.md now reads as what merged', 4000);
-  }).finally(() => {
-    syncing = undefined;
+  let synced = false;
+  await inRoadmapQueue(async () => {
+    if ((await savedRoadmap(path)) === undefined) return;
+    synced = await changeRoadmap(path, (text) => ({ ok: true, text: finishMerged(text, work) }), host);
   });
-  return syncing;
+  return synced;
 }
 
 function refuse(message: string): void {

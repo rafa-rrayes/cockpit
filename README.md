@@ -53,9 +53,8 @@ Claude Code session on this machine:
 - **Activity**: commits, session starts and ends, CI runs and pull requests, newest first.
 
 Cockpit only reads, except when you act: **Clean merged…**; the roadmap board, which writes `ROADMAP.md`; and
-**Ship…**, **Release…**, **Tag…** and **Pull**, which change git and GitHub only after a confirmation. One thing
-happens by itself: when a linked branch's pull request (or a release pull request) has merged, the main checkout's
-`ROADMAP.md` is updated to read as the merge has it (see below). **Start Claude…** only opens a terminal: the Claude
+**Ship…**, **Release…**, **Tag…** and **Pull**, which change git and GitHub only after a confirmation. A merged
+pull request changes only what the board shows; `ROADMAP.md` follows it when you **Pull** (see below). **Start Claude…** only opens a terminal: the Claude
 in it works under its own permission prompts. A Claude's last answer goes into a pull request's body only when you
 Ship; otherwise transcripts never leave the machine. The network calls are `gh` commands, made with your existing
 GitHub CLI login, and the `git fetch`/`push`/`pull` of those actions, to `origin`.
@@ -73,12 +72,13 @@ confirmation dialog, and does nothing if you cancel. If a step fails, a dialog s
   branch and runs `gh pr create`. The title is the cards (or the last commit subject); the body lists the cards and
   the Claude's last answer as the report. So the board travels with the pull request, and the main checkout never
   commits.
-- **Merged**: when a linked branch's pull request merged, its cards are made done and unlinked in the main
-  checkout's `ROADMAP.md`; when a release pull request merged, its lane's `Status:` becomes `shipped`. That is the
-  text the merge brought, so **Pull** afterwards leaves `ROADMAP.md` clean. It waits while `ROADMAP.md` has unsaved
-  edits.
-- **Pull main** (Catch up, on a merged pull request): `git pull --ff-only --autostash` on the main checkout, after
-  the update above. A conflict when the stash is put back is reported.
+- **Merged**: when a linked branch's pull request merged, the board shows its cards done; when a release pull
+  request merged, its lane shows as shipped. `ROADMAP.md` is not touched then, so a plain `git pull` is not stopped
+  by a change Cockpit made.
+- **Pull main** (Catch up, on a merged pull request): first makes the main checkout's `ROADMAP.md` read as the merges
+  have it (those cards done and unlinked, those lanes `Status: shipped`), then runs `git pull --ff-only --autostash`,
+  so `ROADMAP.md` is left clean. It refuses while `ROADMAP.md` has unsaved edits. A conflict when the stash is put
+  back is reported.
 - **Release X…** (a lane whose cards are all done): in a temporary worktree made from `origin/<default>` (this
   checkout is not touched), it bumps the version in `package.json` and the files in `cockpit.release.versionFiles`,
   dates `## Unreleased` in `CHANGELOG.md` as `## X - <today>` (leaving a new, empty `## Unreleased` above it), sets the lane's `Status: shipped`, commits on a new

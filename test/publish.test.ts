@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseChangelog } from '../src/data/releases';
 import { parseRoadmap } from '../src/data/roadmap';
 import { emptyState, type State, type WorkItem } from '../src/model';
-import { bumpVersion, compareVersions, datedChangelog, isReleaseVersion, mergedWork, prBody, prTitle, releaseStep, roadmapCommitMessage } from '../src/publish';
+import { bumpVersion, compareVersions, datedChangelog, isReleaseVersion, mergedWork, prBody, prTitle, releaseStep, roadmapCommitMessage, withMerged } from '../src/publish';
 
 const card = (text: string, lane = '0.2.0') => ({ text, lane });
 
@@ -97,23 +97,47 @@ describe('releaseStep', () => {
   });
 });
 
-describe('mergedWork', () => {
-  it('finds linked cards and release lanes whose pull request merged', () => {
-    const roadmap = parseRoadmap('## 0.2.0\n\n- [~] a <!-- cockpit:wa -->\n- [~] b <!-- cockpit:wb -->\n- [~] c <!-- cockpit:wa -->\n\n## 0.1.0\nStatus: shipped\n\n## 0.1.5\n');
-    const item = (branch: string, state?: 'open' | 'merged'): WorkItem => ({
-      branch,
-      isDefault: false,
-      isCurrent: false,
-      group: 'merged',
-      dirtyCount: 0,
-      ahead: 0,
-      behind: 0,
-      pushed: true,
-      sessionIds: [],
-      ...(state ? { pr: { number: 1, title: '', url: '', branch, isDraft: false, state, checks: { state: 'none' as const } } } : {}),
-    });
+describe('withMerged and mergedWork', () => {
+  const item = (branch: string, state?: 'open' | 'merged', isDefault = false): WorkItem => ({
+    branch,
+    isDefault,
+    isCurrent: false,
+    group: 'merged',
+    dirtyCount: 0,
+    ahead: 0,
+    behind: 0,
+    pushed: true,
+    sessionIds: [],
+    ...(state ? { pr: { number: 1, title: '', url: '', branch, isDraft: false, state, checks: { state: 'none' as const } } } : {}),
+  });
+
+  it('shows linked cards and release lanes whose pull request merged as done and shipped, and names them', () => {
+    const roadmap = parseRoadmap('## 0.2.0\n\n- [~] a <!-- cockpit:wa -->\n- [~] b <!-- cockpit:wb -->\n- [~] c <!-- cockpit:wa -->\n\n## 0.1.0\nStatus: shipped\n\n## 0.1.5\nStatus: in review\n\n- [x] d\n');
+    const items = [item('wa', 'merged'), item('wb', 'open'), item('release-0.1.0', 'merged'), item('release-0.1.5', 'merged')];
+    const lanes = withMerged(roadmap, items);
+    expect(lanes.map((l) => [l.version, l.status, l.merged, ...l.items.map((i) => `${i.status}:${i.text}:${i.branch ?? ''}:${i.merged ? 'merged' : ''}`)])).toEqual([
+      ['0.2.0', undefined, undefined, 'done:a:wa:merged', 'doing:b:wb:', 'done:c:wa:merged'],
+      ['0.1.0', 'shipped', undefined],
+      ['0.1.5', 'shipped', true, 'done:d::'],
+    ]);
+    // The ids stay the file's, so board edits still name the right lines.
+    expect(lanes[0]?.items.map((i) => i.id)).toEqual(roadmap[0]?.items.map((i) => i.id));
+    expect(mergedWork(lanes)).toEqual({ branches: ['wa'], versions: ['0.1.5'] });
+  });
+
+  it('leaves the board as it is when nothing merged, and never counts the default branch', () => {
+    const roadmap = parseRoadmap('## 0.2.0\n\n- [~] a <!-- cockpit:main -->\n');
+    expect(withMerged(roadmap, [item('main', 'merged', true), item('wb', 'open')])).toEqual(roadmap);
+    expect(mergedWork(roadmap)).toEqual({ branches: [], versions: [] });
+  });
+
+  it('feeds releaseStep: a merged release lane is ready to tag', () => {
+    const roadmap = parseRoadmap('## 0.2.0\n\n- [~] a <!-- cockpit:wa -->\n');
     const base = emptyState();
-    const s: State = { ...base, work: { ...base.work, items: [item('wa', 'merged'), item('wb', 'open'), item('release-0.1.0', 'merged'), item('release-0.1.5', 'merged')] }, releases: { ...base.releases, roadmap } };
-    expect(mergedWork(s)).toEqual({ branches: ['wa'], versions: ['0.1.5'] });
+    const items = [item('wa', 'merged')];
+    const s: State = { ...base, work: { ...base.work, items }, releases: { ...base.releases, roadmap: withMerged(roadmap, items) } };
+    const lane = s.releases.roadmap[0];
+    if (!lane) throw new Error('no lane');
+    expect(releaseStep(lane, s)).toEqual({ step: 'release' });
   });
 });

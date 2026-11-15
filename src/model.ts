@@ -176,8 +176,11 @@ export interface RoadmapItem {
   text: string;
   status: ItemStatus; // "- [ ]" todo, "- [~]" doing, "- [x]" done
   /** The branch working on the card: Start Claude records it in ROADMAP.md as "<!-- cockpit:<branch> -->" at the
-   *  end of the card's line, and it is dropped when the branch's pull request merges. */
+   *  end of the card's line, and it is dropped by Cockpit's Pull once the branch's pull request merged. */
   branch?: string;
+  /** The branch's pull request merged while ROADMAP.md here still has the card open and linked: the card shows as
+   *  done (compose sets its status), and Cockpit's Pull rewrites the line before it pulls. */
+  merged?: boolean;
 }
 
 /** One lane of the board: a planned release, or the backlog (work not yet in a release). */
@@ -188,6 +191,9 @@ export interface ReleasePlan {
   title?: string; // "Comunidade"
   target?: string; // free text as written in ROADMAP.md: "week of 2026-11-16"
   status?: string; // free text: "planned", "in progress", "shipped"
+  /** The release pull request merged while ROADMAP.md here does not say "shipped" yet: the lane shows as shipped
+   *  (compose sets its status), and Cockpit's Pull rewrites its Status line before it pulls. */
+  merged?: boolean;
   items: RoadmapItem[];
 }
 
