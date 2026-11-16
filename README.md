@@ -21,6 +21,7 @@
   <a href="#delivery-ship-and-release">Ship &amp; release</a> ·
   <a href="#the-cockpit-command">The <code>cockpit</code> command</a> ·
   <a href="#settings">Settings</a> ·
+  <a href="#privacy">Privacy</a> ·
   <a href="#development">Development</a>
 </p>
 
@@ -248,7 +249,7 @@ a line to the project's `CLAUDE.md` (the copy button under the Roadmap header gi
     npm run smoke       # starts a real VS Code (downloaded into .vscode-test/) with the extension
     npm run package     # cockpit-<version>.vsix
 
-Install it with `code --install-extension cockpit-<version>.vsix`, then reload the window. VS Code 1.100 or newer is
+Install it with `code --install-extension cockpit-<version>.vsix`, then reload the window. Cockpit is not published on the VS Code Marketplace or Open VSX; the `.vsix` on the Releases page is the way to install it. VS Code 1.100 or newer is
 required. `git` must be on the PATH. `gh` (logged in) is optional: without it, the PR and CI parts are left out and
 a short note says why.
 
@@ -284,6 +285,7 @@ written to your user settings, and **All settings…** opens them in VS Code's S
 | Setting | Default | |
 |---|---|---|
 | `cockpit.openOnStartup` | `true` | Open Cockpit as the first, pinned tab when a window starts. |
+| `cockpit.claudes.showAllProjects` | `true` | Show the Claudes of every project. Off: only this window's project. |
 | `cockpit.endedSessionDays` | `7` | How many days of ended Claude sessions to show. |
 | `cockpit.githubPollSeconds` | `60` | How often to ask GitHub (through `gh`) while Cockpit is visible. The minimum is 15. |
 | `cockpit.hiddenSections` | `[]` | Sections to leave out: `needs`, `claudes`, `roadmap`, `work`, `releases`, `activity`. |
@@ -294,12 +296,26 @@ written to your user settings, and **All settings…** opens them in VS Code's S
 | `cockpit.launch.worktree` | `true` | Start the Claude in a worktree of its own. |
 | `cockpit.launch.markDoing` | `true` | Move planned cards to In progress. |
 | `cockpit.promptSteps` | `[]` | The steps of the prompt a Claude started from the board works by. Empty: the standard steps. The steps that follow from the launcher's options (worktree or main checkout, committing, subagents) are always added. |
+| `cockpit.members` | `[]` | Team members for every project (`name`, `color` as `#rrggbb`). Roadmap cards can be assigned to them. Only for organizing. |
+| `cockpit.projectMembers` | `[]` | Team members of this project only, read from the workspace settings; one with a global member's name replaces it. |
 | `cockpit.release.versionFiles` | `[]` | Files whose version **Release…** bumps besides the root `package.json`, as paths from the repository root (e.g. `pyproject.toml`). In each, the first `"version"` key (JSON) or the first standalone current version is replaced. `package-lock.json` is not bumped. |
 
 The launcher opens with the options the last Claude was started with, until a default is changed in the popover.
 
 Claude Code's directory is `$CLAUDE_CONFIG_DIR` when that is set (as Claude Code itself does), otherwise
 `~/.claude`.
+
+## Privacy
+
+Cockpit has no server, account, analytics or telemetry, and the extension contains no code that makes HTTP requests of
+its own. Everything it reads is local: Claude Code's session files under `~/.claude` (or `$CLAUDE_CONFIG_DIR`), your
+git repository and its release files. Those transcripts can contain anything you told Claude, so they are parsed in
+memory to build the page and are never copied elsewhere.
+
+The only traffic that leaves your machine is what you already trust `git` and `gh` with: read-only `gh` queries for
+pull requests and CI (skipped if `gh` is missing or logged out), and, after a confirmation, the `git push`/`pull`
+and `gh pr create` of Ship, Release, Tag and Pull. A Claude's last answer goes into a pull request body only when you
+Ship. Nothing else is sent.
 
 ## What it reads
 
@@ -356,6 +372,9 @@ Unreleased is shown first, then the newest four releases.
 
 ## Development
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and the pull request checklist. Press F5 in VS Code to run the
+extension in an Extension Development Host. CI runs `npm run typecheck`, `npm test` and `npm run build`.
+
 - `src/model.ts` is the contract: the `State` the extension host sends to the webview, and the messages the
   webview sends back.
 - `src/data/*` are the adapters (Claude Code, git, GitHub, releases). `src/data/roadmap.ts` parses the board's file
@@ -385,3 +404,7 @@ To look at the UI with real data outside VS Code:
 `dist/dev.html` with no `?state=` shows an invented sample State, with a roadmap board you can edit (the edits
 stay in the page). `dist/state.json` contains your real prompts, so
 delete it afterwards; `dist/` is not committed or packaged.
+
+## License
+
+[MIT](LICENSE) © 2026 Rafa Rayes
