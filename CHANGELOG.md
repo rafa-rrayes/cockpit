@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.0 - 2026-11-16
+
 - Agents across providers: retain Claude Code support, discover Codex, Gemini CLI and OpenCode sessions, and offer launch presets for Codex, Gemini CLI, OpenCode, Cursor Agent and Aider. Sessions carry provider identity and resume through their original tool and native ID.
 - Configure any other terminal coding agent with `cockpit.agents.custom`, or track it with `cockpit run <agent> -- <command> [args…]`. Optional `cockpit session` hooks report activity, native session ID and completion reports. Unavailable activity is shown as unknown rather than inferred from file recency.
 - Agent-aware launcher, model input, capability-specific controls, provider badges/filter, settings and explicitly created worktrees for non-Claude tools.
