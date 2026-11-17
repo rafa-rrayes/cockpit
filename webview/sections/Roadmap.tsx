@@ -8,6 +8,7 @@ import { nextMinor, normalizeDuration } from '../../src/data/roadmap';
 import { boardMembers, sameMember } from '../../src/settings';
 import { compareVersions, isShipped, releaseStep, tagName } from '../../src/publish';
 import { EFFORTS, MAX_SUBAGENTS, MODELS } from '../../src/launch';
+import { allProviders, isModelName, providerFor } from '../../src/providers';
 import { useCockpit } from '../context';
 import { releaseAction } from '../format';
 import { Icon, type IconName } from '../icons';
@@ -255,7 +256,7 @@ function Card({ item, lane, lanes, members, dragging, dropBefore, selected, sele
       ) : editing === 'duration' ? (
         <DurationInput initial={item.duration} onCommit={(duration) => edit({ op: 'setDuration', id: item.id, ...(duration ? { duration } : {}) })} onClose={() => setEditing(undefined)} />
       ) : (
-        <span class="rm-text" onDblClick={() => setEditing('text')} title={open ? 'Double-click to rename. Cmd/Ctrl-click to select, right-click to start a Claude on it.' : 'Double-click to rename'}>
+        <span class="rm-text" onDblClick={() => setEditing('text')} title={open ? 'Double-click to rename. Cmd/Ctrl-click to select, right-click to start an agent on it.' : 'Double-click to rename'}>
           {item.text}
         </span>
       )}
@@ -286,7 +287,7 @@ function Card({ item, lane, lanes, members, dragging, dropBefore, selected, sele
           {open && (
             <>
               <button type="button" role="menuitem" class="rm-menu-start" onClick={start}>
-                <Icon name="sparkle" /> {many ? `Start Claude on ${selectedCount} cards…` : 'Start Claude…'}
+                <Icon name="sparkle" /> {many ? `Start agent on ${selectedCount} cards…` : 'Start agent…'}
               </button>
               <hr />
             </>
@@ -538,6 +539,7 @@ function PullHandle(props: { open: boolean; what: string; from: string; onPointe
 /** Where a Claude is started from: the model and the thinking slider; pulled down from it, the subagents slider;
  *  pulled down once more, the model the subagents run on. */
 function Launcher({ cards, at, initial, canWorktree, onStart, onClose }: LauncherProps): JSX.Element {
+  const { state } = useCockpit();
   const [o, setO] = useState<LaunchOptions>(() => ({ ...initial, worktree: initial.worktree && canWorktree }));
   // How far the launcher is pulled out: 0 thinking only, 1 the subagents slider, 2 the subagent model too.
   const [depth, setDepth] = useState(initial.subagentModel ? 2 : initial.subagents > 0 ? 1 : 0);
@@ -571,11 +573,13 @@ function Launcher({ cards, at, initial, canWorktree, onStart, onClose }: Launche
     document.addEventListener('pointerup', stop);
   };
 
+  const provider = providerFor(o.agent, state.settings.customAgents);
+  const claude = (o.agent ?? 'claude') === 'claude';
   const planned = cards.some((c) => c.status === 'todo');
   const first = cards[0]?.text ?? '';
 
   return (
-    <div ref={root} class="rm-launch" role="dialog" aria-label={cards.length === 1 ? `Start Claude on ${first}` : `Start Claude on ${cards.length} cards`}>
+    <div ref={root} class="rm-launch" role="dialog" aria-label={cards.length === 1 ? `Start agent on ${first}` : `Start agent on ${cards.length} cards`}>
       <form
         class="rm-launch-form"
         onSubmit={(e) => {
@@ -588,34 +592,35 @@ function Launcher({ cards, at, initial, canWorktree, onStart, onClose }: Launche
           {cards.length > 1 && <span class="count">+{cards.length - 1}</span>}
         </div>
 
-        <div class="segmented" role="group" aria-label="Model">
-          {MODELS.map((m) => (
-            <button key={m.label} type="button" aria-pressed={o.model === m.model} onClick={() => set({ model: m.model })}>
-              {m.label}
-            </button>
-          ))}
-        </div>
-
-        <Steps label="Thinking" icon="bulb" value={EFFORTS.indexOf(o.effort)} max={EFFORTS.length - 1} text={o.effort} onChange={(v) => set({ effort: EFFORTS[v] ?? o.effort })} onPointerDown={pull(1)} />
-        <PullHandle open={depth >= 1} what="Subagents" from="thinking slider" onPointerDown={pull(1)} onToggle={() => showTo(depth >= 1 ? 0 : 1)} />
-        {depth >= 1 && (
+        <label class="agent-picker">
+          <span>Agent</span>
+          <select class="rm-input" aria-label="Agent" value={o.agent ?? 'claude'} onChange={(e) => { setDepth(0); set({ agent: e.currentTarget.value, model: undefined, subagentModel: undefined, subagents: 0 }); }}>
+            {allProviders(state.settings.customAgents).map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+          </select>
+        </label>
+        {claude ? (
+          <div class="segmented" role="group" aria-label="Model">
+            {MODELS.map((m) => (
+              <button key={m.label} type="button" aria-pressed={o.model === m.model} onClick={() => set({ model: m.model })}>{m.label}</button>
+            ))}
+          </div>
+        ) : (
+          <label class="agent-picker"><span>Model</span><input class="rm-input" aria-label="Model" placeholder="Agent default" value={o.model ?? ''} aria-invalid={o.model !== undefined && !isModelName(o.model)} maxLength={160} onInput={(e) => set({ model: e.currentTarget.value || undefined })} /></label>
+        )}
+        {provider?.supportsEffort && <Steps label="Thinking" icon="bulb" value={EFFORTS.indexOf(o.effort)} max={EFFORTS.length - 1} text={o.effort} onChange={(v) => set({ effort: EFFORTS[v] ?? o.effort })} onPointerDown={claude ? pull(1) : undefined} />}
+        {claude && <PullHandle open={depth >= 1} what="Subagents" from="thinking slider" onPointerDown={pull(1)} onToggle={() => showTo(depth >= 1 ? 0 : 1)} />}
+        {claude && depth >= 1 && (
           <div class="rm-pulled">
             <Steps label="Subagents" icon="agent" value={o.subagents} max={MAX_SUBAGENTS} text={o.subagents === 0 ? 'none' : String(o.subagents)} onChange={(v) => set({ subagents: v })} onPointerDown={pull(2)} />
           </div>
         )}
-        {depth >= 1 && <PullHandle open={depth >= 2} what="Subagent model" from="subagents slider" onPointerDown={pull(2)} onToggle={() => showTo(depth >= 2 ? 1 : 2)} />}
-        {depth >= 2 && (
-          <div class="rm-pulled rm-sub-model">
-            <Icon name="agent" />
-            <div class="segmented" role="group" aria-label="Subagent model">
-              {MODELS.map((m) => (
-                <button key={m.label} type="button" aria-pressed={o.subagentModel === m.model} title={m.model ? `Every subagent runs on ${m.label}` : 'Claude Code picks'} onClick={() => set({ subagentModel: m.model })}>
-                  {m.model ? m.label : 'Auto'}
-                </button>
-              ))}
-            </div>
-          </div>
+        {claude && depth >= 1 && <PullHandle open={depth >= 2} what="Subagent model" from="subagents slider" onPointerDown={pull(2)} onToggle={() => showTo(depth >= 2 ? 1 : 2)} />}
+        {claude && depth >= 2 && (
+          <div class="rm-pulled rm-sub-model"><Icon name="agent" /><div class="segmented" role="group" aria-label="Subagent model">
+            {MODELS.map((m) => <button key={m.label} type="button" aria-pressed={o.subagentModel === m.model} title={m.model ? `Every subagent runs on ${m.label}` : 'Claude Code picks'} onClick={() => set({ subagentModel: m.model })}>{m.model ? m.label : 'Auto'}</button>)}
+          </div></div>
         )}
+        {provider?.note && <p class="set-note">{provider.note}</p>}
 
         <div class="rm-launch-foot">
           <button
@@ -640,7 +645,7 @@ function Launcher({ cards, at, initial, canWorktree, onStart, onClose }: Launche
           >
             <Icon name="play" />
           </button>
-          <button ref={go} type="submit" class="btn btn-primary btn-small rm-go">
+          <button ref={go} type="submit" class="btn btn-primary btn-small rm-go" disabled={!provider || (o.model !== undefined && !isModelName(o.model))}>
             <Icon name="sparkle" /> Start
           </button>
         </div>
@@ -706,7 +711,7 @@ export function Roadmap(): JSX.Element {
       <Section id="roadmap" title="Roadmap">
         <div class="rm-none">
           <p class="empty">
-            No roadmap yet. Cockpit keeps it in <code>{r.roadmapName ?? '.cockpit/roadmap.md'}</code>: a plain file that you, and any Claude, can also edit by hand.
+            No roadmap yet. Cockpit keeps it in <code>{r.roadmapName ?? '.cockpit/roadmap.md'}</code>: a plain file that you, and any agent, can also edit by hand.
           </p>
           <button type="button" class="btn btn-primary" onClick={() => edit({ op: 'create' })}>
             Create roadmap
@@ -831,7 +836,7 @@ export function Roadmap(): JSX.Element {
                   setLaunch({ ids: selected, at: { x: b.left, y: b.bottom + 4 } });
                 }}
               >
-                <Icon name="sparkle" /> Start Claude…
+                <Icon name="sparkle" /> Start agent…
               </button>
               <button type="button" class="btn btn-small" onClick={() => setPicked([])}>
                 Clear
@@ -850,9 +855,9 @@ export function Roadmap(): JSX.Element {
       <p class="rm-cli muted">
         <Icon name="terminal" />
         <span>
-          Claudes in this window's terminals can run <code>cockpit status</code>, <code>cockpit ship</code> and <code>cockpit release &lt;version&gt;</code>.
+          Agents in this window's terminals can run <code>cockpit status</code>, <code>cockpit ship</code> and <code>cockpit release &lt;version&gt;</code>.
         </span>
-        <button type="button" class="btn-icon" title="Copy a line for a project's CLAUDE.md that tells Claude to use them" aria-label="Copy a line for CLAUDE.md" onClick={() => post({ type: 'copy', text: CLAUDE_LINE })}>
+        <button type="button" class="btn-icon" title="Copy a line for AGENTS.md or your agent's project instructions" aria-label="Copy a line for agent instructions" onClick={() => post({ type: 'copy', text: CLAUDE_LINE })}>
           <Icon name="copy" />
         </button>
       </p>
@@ -895,7 +900,7 @@ export function Roadmap(): JSX.Element {
           canWorktree={state.work.available}
           onClose={() => setLaunch(undefined)}
           onStart={(options) => {
-            post({ type: 'startClaude', ids: launchCards.map((c) => c.id), options });
+            post({ type: 'startAgent', ids: launchCards.map((c) => c.id), options });
             update({ launch: options });
             setLaunch(undefined);
             setPicked([]);

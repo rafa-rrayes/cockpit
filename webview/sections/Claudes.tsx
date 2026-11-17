@@ -2,6 +2,8 @@
 // folded under their names with a count and their status dots. With "Show all active projects" off (the
 // cockpit.claudes.showAllProjects setting), only the workspace project's sessions, as cards with no group head.
 import type { JSX } from 'preact';
+import { useState } from 'preact/hooks';
+import { providerLabel } from '../../src/providers';
 import type { ClaudeSession, Project, SessionStatus } from '../../src/model';
 import { type SessionFilter, useCockpit } from '../context';
 import { baseName, plural } from '../format';
@@ -11,7 +13,7 @@ import { Ago, Chip, Empty, Section, StatusDot, statusText, statusWord } from '..
 const matches = (s: ClaudeSession, filter: SessionFilter, showEnded: boolean): boolean => {
   if (filter === 'waiting') return s.status === 'waiting';
   if (filter === 'live') return s.live;
-  return s.live || showEnded;
+  return s.live || s.status === 'unknown' || showEnded;
 };
 
 // Order inside a summary: what needs a look first.
@@ -26,7 +28,7 @@ function summary(sessions: ClaudeSession[]): string {
 }
 
 export function SessionCard({ session: s }: { session: ClaudeSession }): JSX.Element {
-  const { openSession } = useCockpit();
+  const { openSession, state } = useCockpit();
   const running = s.subagents.filter((a) => !a.finished).length;
   const done = s.subagents.length - running;
   const worktree = s.cwd !== s.projectKey ? baseName(s.cwd) : undefined;
@@ -36,7 +38,7 @@ export function SessionCard({ session: s }: { session: ClaudeSession }): JSX.Ele
     <button type="button" class={`card card-${s.status}`} data-session={s.sessionId} onClick={() => openSession(s.sessionId)}>
       <span class="card-top">
         <StatusDot status={s.status} decorative />
-        <span class="card-status">{statusText(s)}</span>
+        <span class="card-status" title={s.statusNote}>{statusText(s)}</span><span class="tag agent-badge">{providerLabel(s.provider, state.settings.customAgents)}</span>
         <Ago at={s.updatedAt} />
       </span>
       <span class="card-title">{s.title}</span>
@@ -60,6 +62,7 @@ export function SessionCard({ session: s }: { session: ClaudeSession }): JSX.Ele
           </span>
         )}
       </span>
+      {s.statusNote && <span class="card-status-note">{s.statusNote}</span>}
       {s.lastPrompt && <span class="card-prompt">{s.lastPrompt}</span>}
       {(s.subagents.length > 0 || s.workflows.length > 0) && (
         <span class="chips">
@@ -120,27 +123,31 @@ function ProjectGroup({ project, sessions, defaultOpen }: { project: Project; se
 
 export function Claudes(): JSX.Element {
   const { state, ui, update, post } = useCockpit();
+  const [provider, setProvider] = useState('all');
+  const providers = [...new Set(Object.values(state.sessions).map((s) => s.provider ?? 'claude'))];
   const workspaceProject = state.projects.find((p) => p.isWorkspace);
   // Off only means something in a window with a project: an empty window shows every project.
   const onlyHere = !state.settings.showAllProjects && state.workspace !== undefined;
-  const all = onlyHere
+  const scoped = onlyHere
     ? (workspaceProject?.sessionIds ?? []).map((id) => state.sessions[id]).filter((s): s is ClaudeSession => s !== undefined)
     : Object.values(state.sessions);
+  const all = scoped.filter((s) => provider === 'all' || (s.provider ?? 'claude') === provider);
   const live = all.filter((s) => s.live).length;
   const waiting = all.filter((s) => s.status === 'waiting').length;
-  const ended = all.length - live;
+  const ended = all.filter((s) => s.status === 'ended').length;
+  const unknown = all.filter((s) => !s.live && s.status === 'unknown').length;
   const shown = (p: Project): ClaudeSession[] =>
-    p.sessionIds.map((id) => state.sessions[id]).filter((s): s is ClaudeSession => s !== undefined && matches(s, ui.filter, ui.showEnded));
+    p.sessionIds.map((id) => state.sessions[id]).filter((s): s is ClaudeSession => s !== undefined && matches(s, ui.filter, ui.showEnded) && (provider === 'all' || (s.provider ?? 'claude') === provider));
 
   const groups = state.projects.map((p) => ({ project: p, sessions: shown(p) })).filter((g) => g.project.isWorkspace || g.sessions.length > 0);
 
   const filters: { id: SessionFilter; label: string; n: number }[] = [
-    { id: 'all', label: 'All', n: ui.showEnded ? all.length : live },
+    { id: 'all', label: 'All', n: ui.showEnded ? all.length : live + unknown },
     { id: 'live', label: 'Live', n: live },
     { id: 'waiting', label: 'Waiting', n: waiting },
   ];
 
-  const emptyHere = ui.filter === 'waiting' ? 'No Claude here is waiting for you.' : 'No Claude is running here.';
+  const emptyHere = ui.filter === 'waiting' ? 'No agent here is waiting for you.' : 'No agent is running here.';
 
   let body: JSX.Element | JSX.Element[];
   if (onlyHere) {
@@ -158,7 +165,7 @@ export function Claudes(): JSX.Element {
     const hasWorkspaceProject = workspaceProject !== undefined;
     body = [
       ...(!hasWorkspaceProject && state.workspace ? [<Empty key="empty-here">{emptyHere}</Empty>] : []),
-      ...(groups.length === 0 && !state.workspace ? [<Empty key="empty">No Claude session on this machine yet.</Empty>] : []),
+      ...(groups.length === 0 && !state.workspace ? [<Empty key="empty">No agent session on this machine yet.</Empty>] : []),
       ...groups.map(({ project, sessions }) =>
         project.isWorkspace && sessions.length === 0 ? (
           <div class="group group-open" key={project.key}>
@@ -183,10 +190,11 @@ export function Claudes(): JSX.Element {
   return (
     <Section
       id="claudes"
-      title="Claudes"
-      meta={`${live} live`}
+      title="Agents"
+      meta={`${live} live${unknown ? ` · ${unknown} status unavailable` : ''}`}
       actions={
         <>
+          {providers.length > 1 && <select class="rm-input agent-filter" aria-label="Filter by agent" value={provider} onChange={(e) => setProvider(e.currentTarget.value)}><option value="all">All agents</option>{providers.map((id) => <option key={id} value={id}>{providerLabel(id, state.settings.customAgents)}</option>)}</select>}
           <span class="segmented" role="group" aria-label="Show sessions">
             {filters.map((f) => (
               <button type="button" key={f.id} aria-pressed={ui.filter === f.id} onClick={() => update({ filter: f.id })}>
@@ -204,7 +212,7 @@ export function Claudes(): JSX.Element {
             Show ended <span class="count">{ended}</span>
           </label>
           {state.workspace && (
-            <label class="check" title="Off: only the Claudes of this window's project">
+            <label class="check" title="Off: only the agents of this window's project">
               <input
                 type="checkbox"
                 checked={state.settings.showAllProjects}

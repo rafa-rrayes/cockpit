@@ -206,7 +206,7 @@ describe('canShip and laneOf', () => {
     expect(ok(ready, undefined, { github: undefined })).toBe(false);
     expect(ok({ ...main, ahead: 1 })).toBe(false);
     const st = state([session('s', {})], [main, ready]);
-    expect(shipProblem({ ...ready, dirtyCount: 2 }, st)).toBe('b has 2 uncommitted files: commit them, or resume its Claude, first.');
+    expect(shipProblem({ ...ready, dirtyCount: 2 }, st)).toBe('b has 2 uncommitted files: commit them, or resume its agent, first.');
     expect(shipProblem({ ...ready, pr: pr(7, 'b', {}) }, st)).toBe('b already has pull request #7 (open).');
     expect(shipProblem(ready, { ...st, work: { ...st.work, github: undefined, githubNote: 'gh not logged in' } })).toBe('GitHub is not available here (gh not logged in): Cockpit publishes through gh.');
   });
@@ -214,8 +214,12 @@ describe('canShip and laneOf', () => {
   it('asks the Claude at work to wait, unless it is the one asking; in direct delivery, no GitHub but the main checkout on the default branch', () => {
     const ready = item('b', { worktreePath: `${ROOT}/b`, ahead: 1, sessionIds: ['s'] });
     const busy = state([session('s', { live: true, status: 'busy' })], [main, ready]);
-    expect(shipProblem(ready, busy)).toBe('A Claude is still working on b.');
+    expect(shipProblem(ready, busy)).toBe('An agent is still working on b.');
     expect(shipProblem(ready, busy, { self: true })).toBeUndefined();
+    const history = state([session('s', { provider: 'codex', live: false, status: 'unknown' })], [main, ready]);
+    expect(shipProblem(ready, history)).toBeUndefined();
+    const unknownLive = state([session('s', { provider: 'codex', live: true, status: 'unknown' })], [main, ready]);
+    expect(shipProblem(ready, unknownLive)).toBe('An agent is still working on b.');
 
     const st = state([session('s', {})], [main, ready]);
     const direct = (items: WorkItem[]): State => ({ ...st, work: { ...st.work, items, delivery: 'direct', github: undefined, githubNote: 'no GitHub remote' } });

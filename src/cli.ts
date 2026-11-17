@@ -5,6 +5,8 @@ import { execFileSync } from 'node:child_process';
 import { dirname } from 'node:path';
 import { parseArgs, USAGE } from './agent';
 import { NoCockpitError, sendRequest } from './inbox';
+import { updateManaged } from './data/managed';
+import { runManaged } from './runner';
 
 function git(args: string[]): string | undefined {
   try {
@@ -18,6 +20,20 @@ async function main(argv: string[]): Promise<number> {
   if (argv[0] === 'help' || argv[0] === '--help' || argv[0] === '-h') {
     process.stdout.write(`${USAGE}\n`);
     return 0;
+  }
+  // These commands work outside git, without an extension window. All terminal agents can opt in.
+  if (argv[0] === 'session') {
+    const result = await updateManaged(argv.slice(1));
+    (result.ok ? process.stdout : process.stderr).write(`${result.message}\n`);
+    return result.ok ? 0 : 1;
+  }
+  if (argv[0] === 'run') {
+    const [provider, separator, command, ...args] = argv.slice(1);
+    if (!provider || !/^[a-z][a-z0-9-]{0,63}$/.test(provider) || separator !== '--' || !command) {
+      process.stderr.write('Usage: cockpit run <agent> -- <command> [args…]\n');
+      return 2;
+    }
+    return runManaged({ provider, command, args, cwd: process.cwd(), title: `${provider} in ${process.cwd().split(/[/\\]/).pop()}` });
   }
   // The main checkout, from wherever the command runs (a worktree included): that is where Cockpit keeps the inbox.
   const common = git(['rev-parse', '--path-format=absolute', '--git-common-dir']);
@@ -45,4 +61,7 @@ async function main(argv: string[]): Promise<number> {
 
 void main(process.argv.slice(2)).then((code) => {
   process.exitCode = code;
+}, (e: unknown) => {
+  process.stderr.write(`cockpit: ${e instanceof Error ? e.message : String(e)}\n`);
+  process.exitCode = 1;
 });

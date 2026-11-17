@@ -114,7 +114,7 @@ function ItemCard({ item }: { item: WorkItem }): JSX.Element {
         <FinishButton item={item} />
       </div>
       {sessions.length > 0 && (
-        <ul class="work-sessions" aria-label="Claudes on this branch">
+        <ul class="work-sessions" aria-label="Agents on this branch">
           {sessions.map((s) => (
             <li key={s.sessionId}>
               <button type="button" class="session-pill" onClick={() => openSession(s.sessionId)}>

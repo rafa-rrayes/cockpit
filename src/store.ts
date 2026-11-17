@@ -15,7 +15,8 @@ import { parseRoadmap } from './data/roadmap';
 import type { CatchUpMark, ClaudeSession, Settings, State } from './model';
 import { isProjectSetting, readSettings } from './settings';
 import { ancestorsOf, readProcessTable } from './procs';
-import { type GitSnapshot, loadClaude, loadGit, loadGithub } from './sources';
+import { type GitSnapshot, loadAgents, loadGit, loadGithub } from './sources';
+import { managedDir } from './data/managed';
 
 const CLAUDE_DEBOUNCE_MS = 300;
 const GIT_DEBOUNCE_MS = 1000;
@@ -105,6 +106,7 @@ export class Store implements vscode.Disposable {
   private readonly github: Source<GithubResult>;
 
   private claudeWatcher: FSWatcher | undefined;
+  private managedWatcher: FSWatcher | undefined;
   private gitWatchers: FSWatcher[] = [];
   private watchedGitDir: string | undefined;
   private roadmapWatchers: vscode.Disposable[] = [];
@@ -230,7 +232,7 @@ export class Store implements vscode.Disposable {
     const days = vscode.workspace.getConfiguration('cockpit').get<number>('endedSessionDays', 7);
     const now = Date.now();
     const [sessions] = await Promise.all([
-      loadClaude(this.opts.claudeDir, Math.max(0, days), now),
+      loadAgents(this.opts.claudeDir, Math.max(0, days), now, this.opts.log),
       this.opts.workspace && !this.workspaceProjectKey
         ? projectRootOf(this.opts.workspace.path).then((k) => (this.workspaceProjectKey = k))
         : undefined,
@@ -305,6 +307,14 @@ export class Store implements vscode.Disposable {
   }
 
   private watchClaudeSessions(): void {
+    if (!this.managedWatcher) {
+      try {
+        const watcher = watch(managedDir(), () => this.claudeSoon());
+        watcher.on('error', () => { watcher.close(); this.managedWatcher = undefined; });
+        this.managedWatcher = watcher;
+      } catch { /* A first managed launch creates it; the timer retries. */ }
+    }
+    if (this.claudeWatcher) return;
     const dir = join(this.opts.claudeDir, 'sessions');
     try {
       const w = watch(dir, () => this.claudeSoon());
@@ -367,7 +377,7 @@ export class Store implements vscode.Disposable {
   private scheduleClaude(): void {
     clearInterval(this.claudeTimer);
     this.claudeTimer = setInterval(() => {
-      if (!this.claudeWatcher) this.watchClaudeSessions();
+      if (!this.claudeWatcher || !this.managedWatcher) this.watchClaudeSessions();
       void this.claude.run();
     }, this.visible ? CLAUDE_TIMER_VISIBLE_MS : CLAUDE_TIMER_HIDDEN_MS);
   }
@@ -389,6 +399,7 @@ export class Store implements vscode.Disposable {
     this.gitSoon.cancel();
     for (const t of [this.claudeTimer, this.gitTimer, this.githubTimer]) clearInterval(t);
     this.claudeWatcher?.close();
+    this.managedWatcher?.close();
     for (const w of this.gitWatchers) w.close();
     for (const d of this.roadmapWatchers) d.dispose();
     for (const s of [this.claude, this.git, this.github]) s.dispose();

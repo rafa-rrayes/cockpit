@@ -41,7 +41,7 @@ export function Header(): JSX.Element {
 
   const nav: { id: SectionId; label: string; show: boolean; badge?: number }[] = [
     { id: 'needs', label: 'Needs you', show: state.attention.length > 0, badge: state.attention.length },
-    { id: 'claudes', label: 'Claudes', show: true },
+    { id: 'claudes', label: 'Agents', show: true },
     { id: 'roadmap', label: 'Roadmap', show: Boolean(state.releases.roadmapPath) },
     { id: 'work', label: 'Work', show: state.work.available },
     { id: 'releases', label: 'Releases', show: state.releases.available },
@@ -64,7 +64,7 @@ export function Header(): JSX.Element {
               </button>
             ))}
         </nav>
-        <p class="pulse" aria-label="Claude sessions right now">
+        <p class="pulse" aria-label="Agent sessions right now">
           <span class="pulse-item">
             <span class="dot dot-busy" aria-hidden="true" />
             {working} working

@@ -9,16 +9,19 @@
 import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, delimiter, dirname, join } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join } from 'node:path';
 import * as vscode from 'vscode';
 import { type AgentAction, type AgentResult, statusLines } from './agent';
 import { markOf, shipProblem } from './catchup';
 import { removeMerged } from './clean';
 import { ensureCockpitDir } from './data/cockpitDir';
+import { runGit } from './data/git';
+import { managedTerminal } from './managedLaunch';
+import { isNativeSessionId, providerArgs, providerFor } from './providers';
 import { runGh } from './data/github';
 import { type EditResult, applyRoadmapEdit, finishBranch, finishMerged, linkCard, parseRoadmap, setLaneStatus, starterRoadmap } from './data/roadmap';
 import { cleanCandidates, isHttpsUrl, isSessionId, knownFolders, knownUrls, parseMessage } from './guards';
-import { type LaunchCard, launchArgs, launchEnv, sessionName, worktreeName } from './launch';
+import { type LaunchCard, agentLaunchArgs, launchArgs, launchEnv, launchPrompt, sessionName, worktreeName } from './launch';
 import type { CatchUpMark, ClaudeSession, LaunchOptions, RoadmapEdit, State, WorkItem } from './model';
 import { type ShippedCard, mergedWork, prBody, prTitle, releaseBody, releaseBranch, releaseStep, releaseTitle, tagName } from './publish';
 import { isProjectSetting, storedValue } from './settings';
@@ -103,9 +106,10 @@ export async function handleMessage(raw: unknown, host: ActionHost): Promise<voi
     case 'roadmap':
       // One edit at a time: each reads the file the one before it wrote.
       return inRoadmapQueue(() => editRoadmap(msg.edit, host));
+    case 'startAgent':
     case 'startClaude':
       // In the roadmap queue: the cards are read as the edits before left the file, and marking them follows.
-      return inRoadmapQueue(() => startClaude(msg.ids, msg.options, host));
+      return inRoadmapQueue(() => startAgent(msg.ids, msg.options, host));
     case 'caughtUp':
       if (state) await host.caughtUp(markOf(state, Date.now()));
       return;
@@ -265,10 +269,13 @@ async function changeRoadmap(path: string, change: (text: string) => EditResult,
   return true;
 }
 
-/** `claude` on the PATH the extension host has, or where its installer puts it. */
-function findClaude(): string | undefined {
-  const names = process.platform === 'win32' ? ['claude.exe', 'claude.cmd'] : ['claude'];
-  const dirs = [...(process.env.PATH ?? '').split(delimiter), join(homedir(), '.local', 'bin'), join(homedir(), '.claude', 'local')];
+/** Agent executable on the extension host PATH or a known installer directory. */
+function findAgent(command: string): string | undefined {
+  if (isAbsolute(command)) {
+    try { accessSync(command, constants.X_OK); return statSync(command).isFile() ? command : undefined; } catch { return undefined; }
+  }
+  const names = process.platform === 'win32' ? [command, `${command}.exe`, `${command}.cmd`] : [command];
+  const dirs = [...(process.env.PATH ?? '').split(delimiter), join(homedir(), '.local', 'bin'), join(homedir(), '.claude', 'local'), join(homedir(), '.opencode', 'bin')];
   for (const dir of dirs.filter(Boolean)) {
     for (const name of names) {
       const path = join(dir, name);
@@ -285,7 +292,7 @@ function findClaude(): string | undefined {
 
 /** A new terminal running claude on the cards, by the board's standard prompt. claude is the terminal's process
  *  and gets its arguments as an array, so no shell reads the card text. */
-async function startClaude(ids: string[], options: LaunchOptions, host: ActionHost): Promise<void> {
+async function startAgent(ids: string[], options: LaunchOptions, host: ActionHost): Promise<void> {
   const state = host.state();
   const path = state?.releases.roadmapPath;
   if (!state || !path || !existsSync(path)) return refuse('There is no roadmap to start from.');
@@ -300,30 +307,43 @@ async function startClaude(ids: string[], options: LaunchOptions, host: ActionHo
   }
   const open = cards.filter((c) => c.item.status !== 'done');
   if (open.length === 0) return refuse(cards.length === 1 ? 'That card is done.' : 'Those cards are all done.');
-  if (options.worktree && !state.work.available) return refuse('This folder is not a git repository, so the Claude cannot have a worktree of its own. Untick "Own worktree".');
-  const claude = findClaude();
-  if (!claude) return refuse('Cockpit could not find `claude` on the PATH. Install Claude Code, or start VS Code from a shell that has it.');
+  if (options.worktree && !state.work.available) return refuse('This folder is not a git repository, so the agent cannot have a worktree of its own. Untick "Own worktree".');
+  const provider = providerFor(options.agent, state.settings.customAgents);
+  if (!provider) return refuse('That agent is no longer configured. Choose another agent or update cockpit.agents.custom.');
+  const executable = findAgent(provider.command);
+  if (!executable) return refuse(`Cockpit could not find ${provider.command}. Install ${provider.label}, or start VS Code from a shell that has it on PATH.`);
+  const claude = provider.id === 'claude';
 
   // The folder this window has open: the board may be in .cockpit/, or in another checkout.
-  const cwd = state.workspace?.path ?? dirname(path);
+  let cwd = state.workspace?.path ?? dirname(path);
   const launch: LaunchCard[] = open.map((c) => ({ text: c.item.text, lane: c.lane.version }));
   let worktree: string | undefined;
   if (options.worktree) {
     // Claude Code keeps worktrees in .claude/worktrees/<name>, on a branch "worktree-<name>".
     const root = state.work.repoRoot ?? cwd;
     const branches = new Set(state.work.items.map((i) => i.branch));
-    const taken = (name: string) => existsSync(join(root, '.claude', 'worktrees', name)) || branches.has(`worktree-${name}`) || branches.has(name);
+    const taken = (name: string) => existsSync(join(root, claude ? '.claude' : '.cockpit', 'worktrees', name)) || branches.has(`worktree-${name}`) || branches.has(name);
     const base = worktreeName(launch);
     worktree = base;
     for (let n = 2; taken(worktree); n++) worktree = `${base}-${n}`;
   }
   const project = state.workspace?.name ?? basename(cwd);
+  if (worktree && !claude) {
+    const root = state.work.repoRoot ?? cwd;
+    await ensureCockpitDir(root);
+    const folder = join(root, '.cockpit', 'worktrees', worktree);
+    await mkdir(dirname(folder), { recursive: true });
+    const added = await runGit(root, ['worktree', 'add', '-b', `worktree-${worktree}`, folder]);
+    if (!added.ok) return refuse(`Could not create the agent worktree: ${added.stderr || added.stdout}`);
+    cwd = folder;
+  }
+  const prompt = launchPrompt(launch, options, project, state.settings.promptSteps);
+  const args = claude ? launchArgs(launch, options, project, worktree, state.settings.promptSteps) : agentLaunchArgs(provider, prompt, options);
+  const processOptions = claude ? { shellPath: executable, shellArgs: args, env: launchEnv(options) } : managedTerminal(executable, args, { provider: provider.id, cwd, title: sessionName(launch), prompt });
   const terminal = vscode.window.createTerminal({
-    name: `Claude: ${sessionName(launch)}`,
+    name: `${provider.label}: ${sessionName(launch)}`,
     cwd,
-    shellPath: claude,
-    shellArgs: launchArgs(launch, options, project, worktree, state.settings.promptSteps),
-    env: launchEnv(options),
+    ...processOptions,
     iconPath: new vscode.ThemeIcon('sparkle'),
   });
   terminal.show(false);
@@ -575,13 +595,13 @@ async function releaseDirect(version: string, at: Checkout, path: string, state:
   const { draft } = drafted;
   // A board git tracks goes into the release commit, shipped; one it does not is marked shipped once the commit is made.
   let before: string | undefined;
-  let roadmap: { path: string; text: string } | undefined;
+  let roadmap: { path: string; text: string; originalText?: string } | undefined;
   if (await isTracked(at.repoRoot, at.name)) {
     before = await savedRoadmap(path, at.name, ch);
     if (before === undefined) return;
     const shipped = setLaneStatus(before, version, 'shipped');
     if (!shipped.ok) return ch.refuse(shipped.error);
-    roadmap = { path: at.name, text: shipped.text };
+    roadmap = { path: at.name, text: shipped.text, originalText: before };
   }
   const tag = tagName(version);
   const detail = [
@@ -684,23 +704,27 @@ function refuse(message: string): void {
 
 function focus(session: ClaudeSession, host: ActionHost): void {
   const terminal = host.terminalFor(session.sessionId);
-  if (!terminal) return refuse('This Claude is not running in a terminal of this window.');
+  if (!terminal) return refuse('This agent is not running in a terminal of this window.');
   terminal.show(false);
 }
 
 function resume(session: ClaudeSession, host: ActionHost): void {
   if (session.live) {
     if (host.terminalFor(session.sessionId)) return focus(session, host);
-    return refuse(`"${session.title}" is running in another terminal${session.pid ? ` (pid ${session.pid})` : ''}. Resuming it twice would make two Claudes write the same session.`);
+    return refuse(`"${session.title}" is already running${session.pid ? ` (pid ${session.pid})` : ''}. Focus its existing terminal.`);
   }
-  if (!isSessionId(session.sessionId)) return refuse('That session id looks wrong; not resuming it.');
-  if (!session.cwd || !existsSync(session.cwd)) {
-    return refuse(`The folder this session ran in${session.cwd ? ` (${session.cwd})` : ''} is gone, and Claude Code finds sessions by folder.`);
-  }
-  const terminal = vscode.window.createTerminal({ name: `Claude: ${session.title.slice(0, 40)}`, cwd: session.cwd, iconPath: new vscode.ThemeIcon('sparkle') });
+  const state = host.state();
+  const provider = providerFor(session.provider, state?.settings.customAgents);
+  const nativeId = session.nativeSessionId ?? session.sessionId;
+  if (session.canResume === false || !provider?.resumeArgs) return refuse('This agent does not expose a resumable session. Start a new agent on its roadmap card.');
+  if (!(provider.id === 'claude' ? isSessionId(nativeId) : isNativeSessionId(nativeId))) return refuse('That native session id looks wrong; not resuming it.');
+  if (!session.cwd || !existsSync(session.cwd)) return refuse(`The folder this session ran in${session.cwd ? ` (${session.cwd})` : ''} is gone.`);
+  const executable = findAgent(provider.command);
+  if (!executable) return refuse(`Cockpit could not find ${provider.command} on PATH.`);
+  const args = providerArgs(provider, { sessionId: nativeId }, true)!;
+  const processOptions = provider.id === 'claude' ? { shellPath: executable, shellArgs: args } : managedTerminal(executable, args, { provider: provider.id, cwd: session.cwd, title: session.title, nativeSessionId: nativeId });
+  const terminal = vscode.window.createTerminal({ name: `${provider.label}: ${session.title.slice(0, 40)}`, cwd: session.cwd, ...processOptions, iconPath: new vscode.ThemeIcon('sparkle') });
   terminal.show(false);
-  // The id was checked above, so this line has nothing for the shell to interpret.
-  terminal.sendText(`claude --resume ${session.sessionId}`, true);
 }
 
 async function openTranscript(session: ClaudeSession): Promise<void> {
@@ -718,7 +742,7 @@ async function openTranscript(session: ClaudeSession): Promise<void> {
 function describe(i: WorkItem): string {
   const parts = [i.branch];
   if (i.worktreePath) parts.push(`worktree ${i.worktreePath}`);
-  if (i.worktreePath && i.sessionIds.length) parts.push(`${i.sessionIds.length} ended Claude session${i.sessionIds.length === 1 ? '' : 's'} ran there`);
+  if (i.worktreePath && i.sessionIds.length) parts.push(`${i.sessionIds.length} ended agent session${i.sessionIds.length === 1 ? '' : 's'} ran there`);
   return parts.join('  ·  ');
 }
 
@@ -753,7 +777,7 @@ async function cleanMerged(host: ActionHost): Promise<void> {
     ? `${plan.squashMerged.length} squash-merged branch${plan.squashMerged.length === 1 ? ' is' : 'es are'} left alone: ${defaultBranch} has their changes but not their commits, so git cannot confirm it. Delete ${plan.squashMerged.length === 1 ? 'it' : 'them'} by hand once you are sure.`
     : '';
   if (items.length === 0) {
-    const nothing = 'Nothing to clean: no merged branch is clean, unused and free of live Claudes.';
+    const nothing = 'Nothing to clean: no merged branch is clean, unused and free of live agents.';
     void (squashNote ? vscode.window.showInformationMessage(nothing, { modal: true, detail: squashNote }) : vscode.window.showInformationMessage(nothing));
     return;
   }

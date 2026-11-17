@@ -3,11 +3,12 @@
 // Everything here is plain JSON (no Dates, no classes): times are epoch milliseconds.
 // This file must not import `vscode` or node modules: both bundles compile it.
 import { type SettingEdit, defaultSettings } from './settings';
+import type { CustomAgent } from './providers';
 
 // ───────────────────────────── Claude sessions ─────────────────────────────
 
 /** busy: working. waiting: blocked on the person (permission prompt, question). idle: live, nothing to do.
- *  ended: no live process. unknown: a live process whose status we could not read. */
+ *  ended: confirmed stopped. unknown: detailed status or liveness could not be established. */
 export type SessionStatus = 'busy' | 'waiting' | 'idle' | 'ended' | 'unknown';
 
 export interface Subagent {
@@ -41,9 +42,15 @@ export interface WorkflowRun {
   durationMs?: number;
 }
 
-export interface ClaudeSession {
+export interface AgentSession {
+  /** Missing only on legacy Claude snapshots. */
+  provider?: string;
+  nativeSessionId?: string;
+  agentVersion?: string;
+  canResume?: boolean;
+  statusNote?: string;
   sessionId: string;
-  /** True when a process for it is alive right now. */
+  /** True only when a process for it is confirmed alive right now. Unknown liveness uses false plus status unknown. */
   live: boolean;
   pid?: number;
   status: SessionStatus;
@@ -74,6 +81,9 @@ export interface ClaudeSession {
   subagents: Subagent[];
   workflows: WorkflowRun[];
 }
+
+/** Backwards-compatible name for existing Claude adapters and snapshots. */
+export type ClaudeSession = AgentSession;
 
 /** Sessions are grouped by project: the main checkout of the git repository the session's cwd is in
  *  (so a session inside a worktree belongs to the same project as one in the main checkout), or the cwd
@@ -228,16 +238,18 @@ export type ClaudeModel = 'fable' | 'opus' | 'sonnet' | 'haiku';
 /** `claude --effort <level>`: how much the model thinks. */
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
-/** How the board starts a Claude on roadmap cards. */
+/** How the board starts an agent on roadmap cards. */
 export interface LaunchOptions {
-  /** Absent: Claude Code's own default model. */
-  model?: ClaudeModel;
+  /** Missing in existing settings means Claude Code. */
+  agent?: string;
+  /** Absent: the selected agent's own default model. */
+  model?: string;
   effort: Effort;
   /** 0: the Claude works alone. */
   subagents: number;
   /** The model every subagent runs on, whatever the Claude asks for. Absent: Claude Code decides. */
   subagentModel?: ClaudeModel;
-  /** `claude --worktree`: a new git worktree and branch for the session. */
+  /** Isolate work in a new git worktree and branch. Claude manages its own; Cockpit creates the others. */
   worktree: boolean;
   /** Move the cards that are still planned to "In progress" once the Claude starts. */
   markDoing: boolean;
@@ -323,6 +335,7 @@ export type SectionId = 'needs' | 'claudes' | 'roadmap' | 'work' | 'releases' | 
 
 /** Cockpit's VS Code settings (cockpit.*), checked: see src/settings.ts. */
 export interface Settings {
+  customAgents?: CustomAgent[];
   openOnStartup: boolean;
   /** Claudes shows every project's sessions; off, only the workspace project's. */
   showAllProjects: boolean;
@@ -390,6 +403,7 @@ export type WebviewMessage =
   | { type: 'copy'; text: string }
   | { type: 'cleanMerged' } // the host lists what it would delete and asks before deleting anything
   | { type: 'roadmap'; edit: RoadmapEdit } // edits ROADMAP.md; removing an item asks first
+  | { type: 'startAgent'; ids: string[]; options: LaunchOptions }
   | { type: 'startClaude'; ids: string[]; options: LaunchOptions } // a new terminal running claude on these cards
   | { type: 'openRoadmap' } // ROADMAP.md in the editor
   | { type: 'setSetting'; edit: SettingEdit } // writes one cockpit.* setting to the user's or the workspace's settings

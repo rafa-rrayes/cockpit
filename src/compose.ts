@@ -130,7 +130,7 @@ function prFor(branch: string, prs: PullRequest[]): PullRequest | undefined {
  *  an agent in <root>/.claude/worktrees/agent-<id>, while the session's own cwd stays in the main checkout. */
 export function runningAgentWorktrees(sessions: ClaudeSession[]): Set<string> {
   const out = new Set<string>();
-  for (const s of sessions) if (s.live) for (const a of s.subagents) if (!a.finished) out.add(`agent-${a.id}`);
+  for (const s of sessions) if (s.live && (s.provider ?? 'claude') === 'claude') for (const a of s.subagents) if (!a.finished) out.add(`agent-${a.id}`);
   return out;
 }
 

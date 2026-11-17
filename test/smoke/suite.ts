@@ -1,7 +1,7 @@
 // Runs inside the VS Code that run.mjs starts. The extension's activate() returns a small test API.
 import * as assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import * as vscode from 'vscode';
 import type { CockpitTestApi } from '../../src/extension';
@@ -110,6 +110,7 @@ export async function run(): Promise<void> {
   await waitFor('the board follows a change made in the editor', () => lanes().length === 2, 10_000);
 
   await publishing(api, workspace);
+  await agentLifecycle(api, workspace);
 
   // A project from before 0.3.0: with no .cockpit/roadmap.md, the ROADMAP.md at the root is the board.
   rmSync(roadmapFile);
@@ -136,6 +137,99 @@ export async function run(): Promise<void> {
 
 
 const git = (dir: string, ...args: string[]): string => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
+
+interface AgentCall {
+  args: string[];
+  cwd: string;
+  provider: string;
+  sessionFile: string;
+  managedId: string;
+  electronRunAsNode: string | null;
+}
+
+/** Real terminals, the packaged Electron-as-Node wrapper, hook updates and vendor-specific resume argv. */
+async function agentLifecycle(api: CockpitTestApi, workspace: string): Promise<void> {
+  const log = process.env.COCKPIT_SMOKE_AGENT_LOG;
+  const nativeCodexId = process.env.COCKPIT_SMOKE_CODEX_ID;
+  assert.ok(log && nativeCodexId, 'agent smoke fixture environment is configured');
+  const calls = (): AgentCall[] => existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as AgentCall) : [];
+  const config = vscode.workspace.getConfiguration('cockpit');
+  await config.update('agents.custom', [{ id: 'smoke', label: 'Smoke Agent', command: 'smoke-agent', args: ['--task', '{prompt}'], resumeArgs: ['--restore', '{sessionId}'] }], vscode.ConfigurationTarget.Global);
+  await api.receive({ type: 'refresh' });
+  assert.ok(api.state()?.settings.customAgents?.some((p) => p.id === 'smoke'), 'custom provider reaches the State');
+  const codex = api.state()?.sessions[`codex:${nativeCodexId}`];
+  assert.ok(codex, 'native Codex history was discovered from the isolated home');
+  assert.equal(codex.provider, 'codex');
+  assert.equal(codex.nativeSessionId, nativeCodexId);
+  assert.equal(codex.live, false, 'saved history alone does not assert a running process');
+
+  const text = 'Smoke agent: $(touch COCKPIT_SHOULD_NOT_EXIST)';
+  await api.receive({ type: 'roadmap', edit: { op: 'add', lane: 'Backlog', text } });
+  const findCard = () => api.state()?.releases.roadmap.flatMap((l) => l.items).find((i) => i.text === text);
+  const task = findCard();
+  assert.ok(task, 'the roadmap contains the launch fixture');
+  const stop = async (call: AgentCall): Promise<void> => {
+    writeFileSync(join(dirname(log), `stop-${call.managedId}`), 'stop\n');
+    await waitFor('the managed runner recorded the agent exit', () => JSON.parse(readFileSync(call.sessionFile, 'utf8')).endedAt !== undefined);
+    await api.receive({ type: 'refresh' });
+  };
+  let worktree: string | undefined;
+  try {
+    await api.receive({ type: 'startAgent', ids: [task.id], options: { agent: 'smoke', effort: 'high', subagents: 0, worktree: true, markDoing: true } });
+    await waitFor('the custom agent received its prompt in a real terminal', () => calls().length === 1);
+    const launch = calls()[0]!;
+    worktree = launch.cwd;
+    assert.equal(launch.provider, 'smoke');
+    assert.equal(launch.args[0], '--task');
+    assert.equal(launch.args.length, 2, 'the multiline prompt stays one argv argument');
+    assert.ok(launch.args[1]?.includes(text));
+    assert.ok(realpathSync(launch.cwd).startsWith(join(realpathSync(workspace), '.cockpit', 'worktrees')), 'the provider runs in its isolated worktree');
+    assert.equal(launch.electronRunAsNode, null, 'the wrapper does not leak Electron mode into the agent');
+    assert.ok(launch.sessionFile.startsWith(join(process.env.COCKPIT_HOME!, 'sessions')), 'managed telemetry is isolated from user sessions');
+    assert.ok(!existsSync(join(launch.cwd, 'COCKPIT_SHOULD_NOT_EXIST')), 'prompt text never executes as shell code');
+    assert.equal(findCard()?.status, 'doing', 'starting an agent marks the card in progress');
+    assert.equal(findCard()?.branch, git(launch.cwd, 'branch', '--show-current'), 'the roadmap links to the actual worktree branch');
+    await api.receive({ type: 'refresh' });
+    const live = api.state()?.sessions[`managed:${launch.managedId}`];
+    assert.ok(live?.live, 'the real wrapper process is recognized as live');
+    assert.equal(live.status, 'waiting', 'portable hook activity reaches the shared session view');
+    assert.equal(live.waitingFor, 'Smoke permission');
+    assert.equal(live.report, 'Smoke agent completed safely.');
+    assert.equal(live.inVsCodeTerminal, true, 'Focus terminal can find the wrapper process');
+    await stop(launch);
+    assert.equal(api.state()?.sessions[`managed:${launch.managedId}`]?.status, 'ended');
+
+    await api.receive({ type: 'resumeSession', sessionId: `managed:${launch.managedId}` });
+    await waitFor('the custom provider resumed its native session', () => calls().length === 2);
+    const resumed = calls()[1]!;
+    assert.deepEqual(resumed.args, ['--restore', 'smoke-native-123'], 'resume uses the native id rather than the namespaced Cockpit id');
+    assert.equal(resumed.cwd, launch.cwd);
+    await stop(resumed);
+
+    await api.receive({ type: 'resumeSession', sessionId: `codex:${nativeCodexId}` });
+    await waitFor('Codex history resumed through its own executable', () => calls().length === 3);
+    const resumedCodex = calls()[2]!;
+    assert.equal(resumedCodex.provider, 'codex');
+    assert.deepEqual(resumedCodex.args, ['resume', nativeCodexId]);
+    assert.equal(realpathSync(resumedCodex.cwd), realpathSync(workspace));
+    await api.receive({ type: 'refresh' });
+    const merged = api.state()?.sessions[`codex:${nativeCodexId}`];
+    assert.ok(merged?.live, 'native history and managed runtime merge into one live session');
+    assert.equal(merged.status, 'waiting');
+    assert.equal(Object.values(api.state()?.sessions ?? {}).filter((s) => s.provider === 'codex' && s.nativeSessionId === nativeCodexId).length, 1, 'the resumed session is not duplicated');
+    await stop(resumedCodex);
+  } finally {
+    // Stop every harmless fixture even if an assertion fails; no terminal outlives its temporary workspace.
+    for (const call of calls()) writeFileSync(join(dirname(log), `stop-${call.managedId}`), 'stop\n');
+    for (const terminal of vscode.window.terminals) if (terminal.name.startsWith('Smoke Agent:') || terminal.name.startsWith('Codex:')) terminal.dispose();
+    if (worktree) {
+      const branch = git(worktree, 'branch', '--show-current');
+      git(workspace, 'worktree', 'remove', worktree);
+      git(workspace, 'branch', '-D', branch);
+    }
+    await config.update('agents.custom', undefined, vscode.ConfigurationTarget.Global);
+  }
+}
 
 interface Shown {
   message: string;

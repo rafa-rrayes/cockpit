@@ -9,7 +9,7 @@ import { realpathSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { compose } from '../src/compose';
 import { projectRootOf } from '../src/data/git';
-import { defaultClaudeDir, loadClaude, loadGit, loadGithub } from '../src/sources';
+import { defaultClaudeDir, loadAgents, loadGit, loadGithub } from '../src/sources';
 
 const USAGE = 'usage: node dist/dump-state.js <workspacePath> [--no-github] [--days <n>] [--compact]';
 
@@ -47,7 +47,7 @@ async function main(argv: string[]): Promise<number> {
 
   const now = Date.now();
   const [sessions, gitSnap, workspaceProjectKey] = await Promise.all([
-    loadClaude(defaultClaudeDir(), days, now),
+    loadAgents(defaultClaudeDir(), days, now, (line) => process.stderr.write(`${line}\n`)),
     loadGit(path, now),
     projectRootOf(path),
   ]);

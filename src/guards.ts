@@ -48,12 +48,13 @@ export function parseMessage(raw: unknown): WebviewMessage | undefined {
       const edit = parseRoadmapEdit(raw.edit);
       return edit ? { type: 'roadmap', edit } : undefined;
     }
+    case 'startAgent':
     case 'startClaude': {
       const ids = Array.isArray(raw.ids) ? raw.ids.map(field) : [];
       const options = parseLaunchOptions(raw.options);
       if (ids.length === 0 || ids.length > MAX_BATCH || !options) return undefined;
       if (!ids.every((id): id is string => id !== undefined)) return undefined;
-      return { type: 'startClaude', ids: [...new Set(ids)], options };
+      return { type: raw.type, ids: [...new Set(ids)], options };
     }
     case 'resumeSession':
     case 'focusSession':

@@ -1,6 +1,7 @@
 // Starting a Claude on roadmap cards: the options the board offers, and the command line they become. Kept free of
 // `vscode` and node modules: the webview imports the options, and the prompt and arguments are unit-tested.
 import type { ClaudeModel, Effort, LaunchOptions } from './model';
+import { type AgentProvider, isModelName, isProviderId, providerArgs } from './providers';
 
 export const MODELS: { model?: ClaudeModel; label: string }[] = [
   { label: 'Default' },
@@ -26,14 +27,18 @@ const isEffort = (v: unknown): v is Effort => EFFORTS.includes(v as Effort);
 export function parseLaunchOptions(raw: unknown): LaunchOptions | undefined {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
   const r = raw as Record<string, unknown>;
-  if (r.model !== undefined && !isModel(r.model)) return undefined;
+  if (r.agent !== undefined && !isProviderId(r.agent)) return undefined;
+  const claude = r.agent === undefined || r.agent === 'claude';
+  if (r.model !== undefined && !(claude ? isModel(r.model) : isModelName(r.model))) return undefined;
   if (!isEffort(r.effort)) return undefined;
   if (typeof r.subagents !== 'number' || !Number.isInteger(r.subagents) || r.subagents < 0 || r.subagents > MAX_SUBAGENTS) return undefined;
   if (r.subagentModel !== undefined && !isModel(r.subagentModel)) return undefined;
   const options: LaunchOptions = { effort: r.effort, subagents: r.subagents, worktree: r.worktree === true, markDoing: r.markDoing === true };
-  if (r.model !== undefined) options.model = r.model;
+  if (typeof r.agent === 'string') options.agent = r.agent;
+  if (typeof r.model === 'string') options.model = r.model;
   // Without subagents there is nothing to run on another model.
-  if (r.subagentModel !== undefined && r.subagents > 0) options.subagentModel = r.subagentModel;
+  if (r.subagentModel !== undefined && r.subagents > 0 && claude) options.subagentModel = r.subagentModel;
+  if (!claude) options.subagents = 0;
   return options;
 }
 
@@ -84,7 +89,7 @@ export function sessionName(cards: LaunchCard[]): string {
 /** The general steps of the standard prompt; cockpit.promptSteps replaces them. The steps that depend on the
  *  launcher's options (worktree or main checkout, committing, subagents, batches) are added around them. */
 export const STANDARD_STEPS: string[] = [
-  'Read CLAUDE.md (and the rules it points to), README.md and tasks/lessons.md where they exist, and follow them: they come before anything below.',
+  'Read AGENTS.md, CLAUDE.md, GEMINI.md (and the rules they point to), README.md and tasks/lessons.md where they exist, and follow them: they come before anything below.',
   'Read the code involved before deciding anything. Make the change as small as the card needs: no unrelated refactors and no features nobody asked for. If a card is ambiguous, take the most likely reading and say which.',
   "Prove it works with the project's own scripts: typecheck, build, and run the tests, adding tests for new behaviour. It is not done until they pass.",
   'Where the project keeps a CHANGELOG.md (Unreleased) or a README.md, update them for any change a user would notice.',
@@ -134,7 +139,7 @@ const modelLabel = (m: ClaudeModel): string => MODELS.find((x) => x.model === m)
 /** The environment for `claude` on top of the terminal's: the subagent model, forced, so that the model a Claude
  *  names for an agent is ignored. */
 export function launchEnv(options: LaunchOptions): Record<string, string> {
-  if (!options.subagentModel || options.subagents === 0) return {};
+  if ((options.agent && options.agent !== 'claude') || !options.subagentModel || options.subagents === 0) return {};
   return { CLAUDE_CODE_SUBAGENT_MODEL: options.subagentModel, CLAUDE_CODE_SUBAGENT_MODEL_FORCE: '1' };
 }
 
@@ -146,5 +151,12 @@ export function launchArgs(cards: LaunchCard[], options: LaunchOptions, project:
   if (options.worktree && worktree) args.push('--worktree', worktree);
   // `--` ends the options: the prompt is the one positional argument, whatever it starts with.
   args.push('--', launchPrompt(cards, options, project, general));
+  return args;
+}
+
+/** Non-Claude launch arguments; worktrees are created by Cockpit before starting the process. */
+export function agentLaunchArgs(provider: AgentProvider, prompt: string, options: LaunchOptions): string[] {
+  const args = providerArgs(provider, { prompt, model: options.model }) ?? [];
+  if (provider.id === 'codex') args.unshift('-c', `model_reasoning_effort="${options.effort === 'max' ? 'xhigh' : options.effort}"`);
   return args;
 }

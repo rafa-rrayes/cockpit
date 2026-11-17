@@ -5,6 +5,7 @@
 import type { JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { EFFORTS, MAX_SUBAGENTS, MODELS, STANDARD_STEPS } from '../../src/launch';
+import { allProviders, isModelName, providerFor } from '../../src/providers';
 import { isMemberName, MAX_MEMBER_NAME } from '../../src/data/roadmap';
 import type { Member, SectionId } from '../../src/model';
 import { isRepoFile, MAX_ENDED_DAYS, MAX_MEMBERS, MAX_PROMPT_STEP_CHARS, MAX_PROMPT_STEPS, MAX_VERSION_FILES, MIN_GITHUB_SECONDS, sameMember, SECTIONS, type SettingKey } from '../../src/settings';
@@ -283,18 +284,19 @@ export function SettingsPopover(): JSX.Element {
           </fieldset>
 
           <fieldset class="set-group">
-            <legend>Start Claude opens with</legend>
+            <legend>Start agent opens with</legend>
+            <label class="agent-picker"><span>Agent</span><select class="rm-input" aria-label="Default agent" value={s.launch.agent ?? 'claude'} onChange={(e) => { setLaunch('launch.agent', e.currentTarget.value); setLaunch('launch.model', 'default'); }}>{allProviders(s.customAgents).map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</select></label>
             <div class="set-row">
               <span class="set-label">Model</span>
-              <div class="segmented" role="group" aria-label="Model">
+              {(s.launch.agent ?? 'claude') !== 'claude' ? <input key={`${s.launch.agent}:${s.launch.model}`} class="rm-input" aria-label="Default model" placeholder="Agent default" defaultValue={s.launch.model ?? ''} maxLength={160} onBlur={(e) => { const model = e.currentTarget.value.trim(); if (!model || isModelName(model)) setLaunch('launch.model', model || 'default'); else e.currentTarget.value = s.launch.model ?? ''; }} /> : <div class="segmented" role="group" aria-label="Model">
                 {MODELS.map((m) => (
                   <button key={m.label} type="button" aria-pressed={s.launch.model === m.model} onClick={() => setLaunch('launch.model', m.model ?? 'default')}>
                     {m.label}
                   </button>
                 ))}
-              </div>
+              </div>}
             </div>
-            <div class="set-row">
+            {providerFor(s.launch.agent, s.customAgents)?.supportsEffort && <div class="set-row">
               <span class="set-label">Thinking</span>
               <div class="segmented" role="group" aria-label="Thinking">
                 {EFFORTS.map((e) => (
@@ -303,16 +305,16 @@ export function SettingsPopover(): JSX.Element {
                   </button>
                 ))}
               </div>
-            </div>
-            <NumberField
+            </div>}
+            {(s.launch.agent ?? 'claude') === 'claude' && <NumberField
               label="Subagents"
               unit={s.launch.subagents === 0 ? 'works alone' : 'in parallel'}
               value={s.launch.subagents}
               min={0}
               max={MAX_SUBAGENTS}
               onCommit={(v) => setLaunch('launch.subagents', v)}
-            />
-            {s.launch.subagents > 0 && (
+            />}
+            {(s.launch.agent ?? 'claude') === 'claude' && s.launch.subagents > 0 && (
               <div class="set-row">
                 <span class="set-label">Subagent model</span>
                 <div class="segmented" role="group" aria-label="Subagent model">
@@ -330,6 +332,11 @@ export function SettingsPopover(): JSX.Element {
             </div>
           </fieldset>
 
+          <fieldset class="set-group">
+            <legend>Other agents</legend>
+            <p class="set-note">Add any agent CLI with <code>cockpit.agents.custom</code> in VS Code settings. Commands receive prompts as arguments and appear here automatically.</p>
+            <button type="button" class="link" onClick={() => post({ type: 'openSettings' })}>Configure custom agents…</button>
+          </fieldset>
           <fieldset class="set-group">
             <legend>Members</legend>
             <Members members={s.members} onCommit={(m) => set('members', m)} />

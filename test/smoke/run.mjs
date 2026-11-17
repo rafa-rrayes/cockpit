@@ -28,6 +28,10 @@ const base = mkdtempSync(join(tmpdir(), 'cockpit-smoke-'));
 const workspace = join(base, 'shop');
 const claudeDir = join(base, 'claude');
 cpSync(join(root, 'test/fixtures/claude'), claudeDir, { recursive: true });
+const codexDir = join(base, 'codex');
+const geminiDir = join(base, 'gemini');
+const cockpitDir = join(base, 'cockpit');
+for (const path of [codexDir, geminiDir, cockpitDir]) mkdirSync(path);
 
 // A small repository: main with a CHANGELOG, a merged branch and one with work on it.
 const git = (...args) => execFileSync('git', ['-C', workspace, ...args], { stdio: 'pipe' });
@@ -78,6 +82,40 @@ esac
 );
 chmodSync(join(ghDir, 'gh'), 0o755);
 
+// Harmless agents exercise the real terminal runner and hook CLI; no real agent or provider can be reached.
+const agentLog = join(base, 'agent-calls.jsonl');
+const fakeAgent = `#!${process.execPath}
+const fs = require('node:fs');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+const args = process.argv.slice(2);
+const nativeId = process.env.COCKPIT_AGENT === 'codex' ? args[1] : 'smoke-native-123';
+for (const argv of [['id', nativeId], ['report', 'Smoke agent completed safely.'], ['waiting', 'Smoke permission']]) {
+  execFileSync('cockpit', ['session', ...argv], { encoding: 'utf8', stdio: 'pipe' });
+}
+const file = process.env.COCKPIT_SESSION_FILE;
+const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+fs.appendFileSync(process.env.COCKPIT_SMOKE_AGENT_LOG, JSON.stringify({ args, cwd: process.cwd(), provider: process.env.COCKPIT_AGENT, sessionFile: file, managedId: record.id, electronRunAsNode: process.env.ELECTRON_RUN_AS_NODE || null }) + '\\n');
+const stop = path.join(path.dirname(process.env.COCKPIT_SMOKE_AGENT_LOG), 'stop-' + record.id);
+const timer = setInterval(() => { if (fs.existsSync(stop)) { clearInterval(timer); process.exit(0); } }, 50);
+setTimeout(() => { process.stderr.write('Smoke agent was not stopped by the suite.\\n'); process.exit(1); }, 60000).unref();
+`;
+for (const name of ['smoke-agent', 'codex']) {
+  writeFileSync(join(ghDir, name), fakeAgent);
+  chmodSync(join(ghDir, name), 0o755);
+}
+writeFileSync(join(ghDir, 'opencode'), '#!/bin/sh\nprintf "[]\\n"\n');
+chmodSync(join(ghDir, 'opencode'), 0o755);
+const codexNativeId = '12345678-1234-4123-8123-123456789abc';
+const history = join(codexDir, 'sessions', '2026', '11', '16');
+mkdirSync(history, { recursive: true });
+const now = new Date().toISOString();
+writeFileSync(join(history, `rollout-2026-11-16T00-00-00-${codexNativeId}.jsonl`), [
+  { type: 'session_meta', timestamp: now, payload: { id: codexNativeId, cwd: workspace, timestamp: now, cli_version: 'smoke', git: { branch: 'main' } } },
+  { type: 'event_msg', timestamp: now, payload: { type: 'user_message', message: 'Resume the smoke fixture' } },
+  { type: 'event_msg', timestamp: now, payload: { type: 'agent_message', message: 'Saved smoke report.' } },
+].map((r) => JSON.stringify(r)).join('\n') + '\n');
+
 let code = 0;
 try {
   await runTests({
@@ -96,8 +134,16 @@ try {
     ],
     extensionTestsEnv: {
       CLAUDE_CONFIG_DIR: claudeDir,
+      CODEX_HOME: codexDir,
+      GEMINI_CLI_HOME: geminiDir,
+      COCKPIT_GEMINI_DIR: geminiDir,
+      COCKPIT_HOME: cockpitDir,
+      OPENCODE_DATA_HOME: join(base, 'opencode-data'),
+      COCKPIT_OPENCODE_COMMAND: join(ghDir, 'opencode'),
       COCKPIT_SMOKE_WORKSPACE: workspace,
       COCKPIT_SMOKE_GH: ghDir,
+      COCKPIT_SMOKE_AGENT_LOG: agentLog,
+      COCKPIT_SMOKE_CODEX_ID: codexNativeId,
       PATH: `${ghDir}${delimiter}${process.env.PATH ?? ''}`,
     },
   });

@@ -5,6 +5,9 @@ import { join } from 'node:path';
 import type { ActivityEvent, ClaudeSession, Releases } from './model';
 import type { GitResult, GithubResult } from './compose';
 import { readClaude } from './data/claude';
+import { readCodex } from './data/codex';
+import { readManaged } from './data/managed';
+import { readOtherAgents } from './data/otherAgents';
 import { readConfig, resolveDelivery } from './data/cockpitDir';
 import { hasOrigin, projectRootOf, readGit, recentCommits } from './data/git';
 import { type GithubRead, readGithub } from './data/github';
@@ -17,6 +20,70 @@ export const defaultClaudeDir = (): string => process.env.CLAUDE_CONFIG_DIR || j
 
 export function loadClaude(claudeDir: string, endedSessionDays: number, now: number): Promise<ClaudeSession[]> {
   return readClaude({ claudeDir, endedSessionDays, now, resolveProjectKey: projectRootOf });
+}
+
+export const defaultCodexDir = (): string => process.env.CODEX_HOME || join(homedir(), '.codex');
+
+/** Merge the native adapters and the portable process bridge. A failed provider never hides another one's sessions. */
+export async function loadAgents(claudeDir: string, endedSessionDays: number, now: number, log: (line: string) => void = () => {}): Promise<ClaudeSession[]> {
+  const opts = { endedSessionDays, now, resolveProjectKey: projectRootOf };
+  const results = await Promise.allSettled([
+    loadClaude(claudeDir, endedSessionDays, now).then((ss) => ss.map((s) => ({ ...s, provider: 'claude', nativeSessionId: s.sessionId, agentVersion: s.claudeVersion, canResume: true }))),
+    readCodex({ ...opts, codexDir: defaultCodexDir() }),
+    readOtherAgents({ ...opts, geminiDir: process.env.COCKPIT_GEMINI_DIR, opencodeCommand: process.env.COCKPIT_OPENCODE_COMMAND }),
+    readManaged(opts),
+  ]);
+  const sessions: ClaudeSession[] = [];
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') sessions.push(...r.value);
+    else log(`${['Claude Code', 'Codex', 'Other agents', 'Managed agents'][i]} discovery failed: ${String(r.reason)}`);
+  });
+  return mergeAgentSessions(sessions);
+}
+
+/** A resumed native session also has a process wrapper: keep the rich native transcript and the observed lifetime. */
+export function mergeAgentSessions(sessions: ClaudeSession[]): ClaudeSession[] {
+  const native = new Map<string, ClaudeSession>();
+  const result: ClaudeSession[] = [];
+  for (const s of sessions) {
+    if (s.sessionId.startsWith('managed:')) continue;
+    const copy = { ...s };
+    native.set(`${s.provider ?? 'claude'}:${s.nativeSessionId ?? s.sessionId}`, copy);
+    result.push(copy);
+  }
+  const managedGroups = new Map<string, ClaudeSession[]>();
+  for (const s of sessions.filter((s) => s.sessionId.startsWith('managed:'))) {
+    const key = s.nativeSessionId ? `${s.provider}:${s.nativeSessionId}` : s.sessionId;
+    const group = managedGroups.get(key) ?? [];
+    group.push(s); managedGroups.set(key, group);
+  }
+  const newest = (a: ClaudeSession, b: ClaudeSession) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0) || b.sessionId.localeCompare(a.sessionId);
+  for (const [key, group] of managedGroups) {
+    group.sort(newest);
+    const latest = group[0]!;
+    let s = native.get(key);
+    if (!s) {
+      // Keep one stable identity across custom-provider resumes, with the newest data and any observed live process.
+      const first = [...group].sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0) || a.sessionId.localeCompare(b.sessionId))[0]!;
+      s = { ...latest, sessionId: first.sessionId };
+      result.push(s);
+    }
+    const managed = group.find((m) => m.live);
+    if (managed) {
+      const nativeLive = s.live;
+      s.live = true;
+      s.pid = managed.pid;
+      // A native live status is more informative than an unknown wrapper status; hook reports are explicit.
+      if (managed.status !== 'unknown' || s.status === 'ended' || !nativeLive) {
+        s.status = managed.status;
+        s.statusNote = managed.statusNote;
+        s.waitingFor = managed.waitingFor;
+      }
+    }
+    const report = group.find((m) => m.report !== undefined);
+    if (report && (!s.report || (report.updatedAt ?? 0) >= (s.updatedAt ?? 0))) s.report = report.report;
+  }
+  return result;
 }
 
 export interface GitSnapshot {

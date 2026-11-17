@@ -159,3 +159,13 @@ describe('members', () => {
     expect(boardMembers({ members: [rafa, claude], projectMembers: [local] })).toEqual([local, claude]);
   });
 });
+
+describe('agent settings', () => {
+  const helper = { id: 'helper', label: 'Helper', command: 'helper-cli', args: ['{prompt}'] };
+  it('reads provider and custom models without changing legacy defaults', () => {
+    expect(from({ 'launch.agent': 'codex', 'launch.model': 'gpt-6.1-sol', 'agents.custom': [helper] })).toMatchObject({ launch: { agent: 'codex', model: 'gpt-6.1-sol' }, customAgents: [helper] });
+    expect(parseSettingEdit({ key: 'agents.custom', value: [helper] })).toEqual({ key: 'agents.custom', value: [helper] });
+    expect(parseSettingEdit({ key: 'agents.custom', value: [{ ...helper, id: 'codex' }] })).toBeUndefined();
+    expect(parseSettingEdit({ key: 'launch.agent', value: '-bad' })).toBeUndefined();
+  });
+});

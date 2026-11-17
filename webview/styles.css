@@ -1113,3 +1113,12 @@ body.vscode-high-contrast button.act-row:hover { outline: 1px dashed var(--vscod
 .ci-detail-empty { margin: 0 0 8px; font-size: 12px; }
 .ci-run-bar { display: flex; align-items: center; gap: 4px; padding-right: 6px; }
 .ci-run-bar .ci-row { flex: 1; min-width: 0; width: auto; }
+
+/* Provider controls fit the existing compact launcher and session cards. */
+.agent-picker { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.agent-picker > span { min-width: 42px; color: var(--muted); }
+.agent-picker .rm-input { flex: 1; min-width: 0; }
+.agent-badge { flex-shrink: 0; font-size: 10px; }
+.agent-filter { width: auto; max-width: 150px; font-size: 11px; }
+
+.card-status-note { color: var(--muted); font-size: 11px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

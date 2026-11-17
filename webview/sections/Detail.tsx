@@ -1,6 +1,7 @@
 // The side drawer for one session: what it is doing, its agents and workflows, and the actions on it.
 // It is modal: the page behind is inert, Esc or the backdrop closes it, and focus goes back where it came from.
 import type { JSX } from 'preact';
+import { providerLabel, providerFor } from '../../src/providers';
 import { useEffect, useRef } from 'preact/hooks';
 import { laneOf } from '../../src/catchup';
 import type { ClaudeSession, Subagent, WorkflowPhase, WorkflowRun } from '../../src/model';
@@ -114,7 +115,9 @@ export function Detail({ session: s, onClose }: { session: ClaudeSession; onClos
     { label: 'Name', value: s.name, mono: true },
     { label: 'Started', value: s.startedAt !== undefined ? fullDate(s.startedAt) : undefined },
     { label: 'Last activity', value: s.updatedAt !== undefined ? <Ago at={s.updatedAt} long /> : undefined },
-    { label: 'Claude Code', value: s.claudeVersion, mono: true },
+    { label: 'Agent', value: providerLabel(s.provider, state.settings.customAgents) },
+    { label: 'Version', value: s.agentVersion ?? s.claudeVersion, mono: true },
+    { label: 'Status detail', value: s.statusNote },
     { label: 'Process', value: s.pid !== undefined ? String(s.pid) : undefined, mono: true },
     { label: 'Session ID', value: s.sessionId, mono: true },
     { label: 'Transcript', value: s.transcriptPath, mono: true },
@@ -141,7 +144,7 @@ export function Detail({ session: s, onClose }: { session: ClaudeSession; onClos
         </header>
 
         <div class="drawer-actions">
-          {!s.live && (
+          {!s.live && s.canResume !== false && providerFor(s.provider, state.settings.customAgents)?.resumeArgs && (
             <button type="button" class="btn btn-primary" onClick={() => post({ type: 'resumeSession', sessionId: s.sessionId })}>
               <Icon name="play" /> Resume
             </button>

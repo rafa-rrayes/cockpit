@@ -225,7 +225,7 @@ function attentionIndicators(store: Store, view: vscode.TreeView<never>): vscode
     item.text = attention.length ? `$(dashboard) Cockpit $(bell-dot) ${attention.length}` : '$(dashboard) Cockpit';
     item.backgroundColor = attention.length ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
     item.tooltip = [
-      `Cockpit: ${live} live Claude${live === 1 ? '' : 's'}`,
+      `Cockpit: ${live} live agent${live === 1 ? '' : 's'}`,
       ...attention.map((a) => `• ${a.title}${a.detail ? ` (${a.detail})` : ''}`),
       'Click to open',
     ].join('\n');
@@ -246,7 +246,7 @@ function cockpitCommand(context: vscode.ExtensionContext): void {
     // Read-only install, or Windows: the shim may still run.
   }
   const env = context.environmentVariableCollection;
-  env.description = 'Puts the `cockpit` command on the PATH, so a Claude can ask Cockpit to ship and release.';
+  env.description = 'Puts the `cockpit` command on the PATH, so agents can ask Cockpit to ship and release.';
   env.prepend('PATH', `${bin}${delimiter}`);
 }
 

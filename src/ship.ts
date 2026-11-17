@@ -4,7 +4,7 @@
 // Two deliveries: `pr` pushes branches and opens pull requests on GitHub (the release too, from a temporary
 // worktree); `direct` merges into the default branch in the main checkout and releases with a commit and a tag
 // there, pushing only when asked.
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { type RunResult, runGit } from './data/git';
@@ -171,6 +171,8 @@ export interface ReleaseDraft {
   files: { path: string; text: string; change: string }[];
   /** The Unreleased lines of the changelog. */
   notes: string[];
+  /** Direct delivery only: the exact inputs reviewed before confirmation, including absent optional files. */
+  original?: { files: { path: string; bytes?: string }[]; index: string };
 }
 
 type Drafted = { ok: true; draft: ReleaseDraft } | { ok: false; error: string };
@@ -261,21 +263,89 @@ export async function draftDirect(opts: { repoRoot: string; base: string; versio
   if (taken) return fail(taken);
   const sha = await git(repoRoot, ['rev-parse', '--verify', 'HEAD^{commit}']);
   if (!sha.ok) return fail(`${base} has no commit to release.`);
-  const made = await releaseFiles((path) => readFile(join(repoRoot, path), 'utf8').catch(() => undefined), { ...opts, where: 'the main checkout' });
+  const originals = new Map<string, string | undefined>();
+  const made = await releaseFiles(async (path) => {
+    const bytes = await readFile(join(repoRoot, path)).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return undefined;
+      throw e;
+    });
+    originals.set(path, bytes?.toString('base64'));
+    return bytes?.toString('utf8');
+  }, { ...opts, where: 'the main checkout' });
   if (!made.ok) return made;
   const paths = made.files.map((f) => f.path);
   const status = await git(repoRoot, ['status', '--porcelain', '--', ...paths]);
   if (!status.ok) return fail(`git status failed in ${repoRoot}: ${why(status)}`);
   const dirty = status.stdout.split('\n').filter(Boolean).map((l) => l.slice(3));
   if (dirty.length) return fail(`${dirty.join(', ')} ${dirty.length === 1 ? 'has' : 'have'} uncommitted changes: commit them first. The release commit holds its own edits only.`);
-  return { ok: true, draft: { repoRoot, base, version, branch: releaseBranch(version), baseSha: sha.stdout.trim(), files: made.files, notes: made.notes } };
+  const index = await git(repoRoot, ['ls-files', '--stage', '-z', '--', ...originals.keys()]);
+  if (!index.ok) return fail(`Could not read the release files' index state: ${why(index)}`);
+  const original = { files: [...originals].map(([path, bytes]) => ({ path, ...(bytes === undefined ? {} : { bytes }) })), index: index.stdout };
+  return { ok: true, draft: { repoRoot, base, version, branch: releaseBranch(version), baseSha: sha.stdout.trim(), files: made.files, notes: made.notes, original } };
+}
+
+/** Refuse overlapping releases across VS Code windows as well as within this process. A crashed owner's lock
+ *  is deliberately not stolen: removing a lock whose owner is uncertain could allow two writers. */
+async function releaseLock(repoRoot: string): Promise<{ release(): Promise<void> } | { error: string }> {
+  const found = await git(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+  if (!found.ok) return { error: `Could not locate the repository's release lock: ${why(found)}` };
+  const path = join(found.stdout.trim(), 'cockpit-release.lock');
+  try {
+    const lock = await open(path, 'wx');
+    try {
+      await lock.writeFile(`${process.pid}\n`);
+    } catch (e) {
+      await lock.close();
+      await rm(path, { force: true });
+      throw e;
+    }
+    return { release: async () => { await lock.close(); await rm(path, { force: true }); } };
+  } catch (e) {
+    return { error: (e as NodeJS.ErrnoException).code === 'EEXIST'
+      ? `Another Cockpit release holds ${path}. Wait for it to finish; if its window crashed, remove that lock only after confirming no release is running.`
+      : `Could not lock this repository for release: ${String(e)}` };
+  }
+}
+
+async function changedReleaseInputs(draft: ReleaseDraft): Promise<string | undefined> {
+  if (!draft.original) return 'This release has no original file snapshot: prepare the release again.';
+  const paths = draft.original.files.map((f) => f.path);
+  const index = await git(draft.repoRoot, ['ls-files', '--stage', '-z', '--', ...paths]);
+  if (!index.ok) return `Could not recheck the release files' index state: ${why(index)}`;
+  if (index.stdout !== draft.original.index) return 'The release files\' staged changes changed since the release was prepared: release again. Nothing was overwritten.';
+  const status = await git(draft.repoRoot, ['status', '--porcelain', '--', ...draft.files.map((f) => f.path)]);
+  if (!status.ok) return `Could not recheck the release files: ${why(status)}`;
+  if (status.stdout.trim()) return 'The release files have uncommitted changes since the release was prepared: release again. Nothing was overwritten.';
+  for (const f of draft.original.files) {
+    const path = join(draft.repoRoot, f.path);
+    // A replaced symlink is also a change: writing through it could change a different file entirely.
+    const info = await lstat(path).catch((e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') return undefined;
+      throw e;
+    });
+    const bytes = info?.isFile() ? await readFile(path) : undefined;
+    if ((info && !info.isFile()) || bytes?.toString('base64') !== f.bytes) {
+      return `${f.path} changed since the release was prepared: release again. Nothing was overwritten.`;
+    }
+  }
+  return undefined;
 }
 
 /** `direct` delivery: writes the draft's files, commits only them as "Release X" on `base` in the main checkout, tags
  *  that commit vX (annotated), and pushes both at once when `push`. `roadmap` (the board's path from the root and its
  *  new text) is written and committed with them: pass it only when git tracks the board. A commit that fails puts
  *  every file back as it was. */
-export async function commitRelease(draft: ReleaseDraft, opts: { roadmap?: { path: string; text: string }; push: boolean }): Promise<Outcome> {
+export async function commitRelease(draft: ReleaseDraft, opts: { roadmap?: { path: string; text: string; originalText?: string }; push: boolean }): Promise<Outcome> {
+  const lock = await releaseLock(draft.repoRoot);
+  if ('error' in lock) return stop([], lock.error);
+  try {
+    return await commitReleaseLocked(draft, opts);
+  } finally {
+    await lock.release();
+  }
+}
+
+async function commitReleaseLocked(draft: ReleaseDraft, opts: { roadmap?: { path: string; text: string; originalText?: string }; push: boolean }): Promise<Outcome> {
   const { repoRoot, base, version } = draft;
   const done: string[] = [];
   const off = await onBase(repoRoot, base);
@@ -286,12 +356,24 @@ export async function commitRelease(draft: ReleaseDraft, opts: { roadmap?: { pat
   const files = [...draft.files, ...(opts.roadmap ? [opts.roadmap] : [])];
   const paths = files.map((f) => f.path);
   const before = await Promise.all(paths.map((p) => readFile(join(repoRoot, p), 'utf8').catch(() => undefined)));
+  const changed = await changedReleaseInputs(draft);
+  if (changed) return stop(done, changed);
+  if (opts.roadmap?.originalText !== undefined && before[before.length - 1] !== opts.roadmap.originalText) {
+    return stop(done, `${opts.roadmap.path} changed since the release was prepared: release again. Nothing was overwritten.`);
+  }
   for (const f of files) await writeFile(join(repoRoot, f.path), f.text, 'utf8');
   const title = releaseTitle(version);
   const commit = await git(repoRoot, ['commit', '--quiet', '-m', title, '--', ...paths]);
   if (!commit.ok) {
-    await Promise.all(paths.map((p, i) => (before[i] === undefined ? undefined : writeFile(join(repoRoot, p), before[i] as string, 'utf8'))));
-    return stop(done, `Could not commit the release: ${why(commit)}. The files are as they were.`);
+    let keptNewer = false;
+    await Promise.all(files.map(async (f, i) => {
+      // A hook or editor may write during git commit. Never roll that newer content back over.
+      const current = await readFile(join(repoRoot, f.path), 'utf8').catch(() => undefined);
+      if (current !== f.text) { keptNewer = true; return; }
+      if (before[i] === undefined) await rm(join(repoRoot, f.path));
+      else await writeFile(join(repoRoot, f.path), before[i] as string, 'utf8');
+    }));
+    return stop(done, `Could not commit the release: ${why(commit)}. ${keptNewer ? 'Newer file edits were kept; unchanged release edits were rolled back.' : 'The files are as they were.'}`);
   }
   done.push(`committed ${paths.join(', ')} on ${base} as "${title}"`);
 

@@ -188,7 +188,7 @@ describe('statusLines', () => {
     expect(text).toContain('Delivery: pull requests on o/r: ship pushes the branch and opens its pull request.');
     expect(text).toContain('  next: cockpit release 0.3.0  (opens the release pull request)');
     expect(text).toContain('Branches\n  worktree-status (here)  2 ahead\n    ready to ship: cockpit ship');
-    expect(text).toContain('  worktree-export  1 ahead\n    cannot ship: A Claude is still working on worktree-export.');
+    expect(text).toContain('  worktree-export  1 ahead\n    cannot ship: An agent is still working on worktree-export.');
     expect(text).toContain('  worktree-dirty  1 ahead, 3 uncommitted\n    cannot ship:');
     expect(text).not.toContain('worktree-done');
     // The asking Claude's own branch comes before the release.
