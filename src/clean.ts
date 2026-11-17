@@ -30,7 +30,7 @@ export async function removeMerged(
   const kept: string[] = [];
   for (const item of items) {
     if (inUse(item)) {
-      kept.push(`${item.branch}: in use now (a Claude, a window or a change appeared)`);
+      kept.push(`${item.branch}: in use now (an agent, a window or a change appeared)`);
       continue;
     }
     if (!(await mergedInto(repoRoot, item.branch, bases))) {

@@ -235,3 +235,11 @@ describe('WindowRegistry', () => {
     }
   });
 });
+
+describe('provider-neutral launch message', () => {
+  it('accepts startAgent while retaining startClaude compatibility', () => {
+    const options = { agent: 'codex', effort: 'high', subagents: 0, worktree: true, markDoing: true };
+    expect(parseMessage({ type: 'startAgent', ids: ['3:ab'], options })).toEqual({ type: 'startAgent', ids: ['3:ab'], options });
+    expect(parseMessage({ type: 'startAgent', ids: ['3:ab'], options: { ...options, agent: '../bad' } })).toBeUndefined();
+  });
+});

@@ -312,6 +312,9 @@ export function sampleState(now = Date.now()): State {
     }),
   ];
 
+  sessions.push(session({ sessionId: 'codex:019c6e27-e55b-73d1-87d8-4e01f1f75043', nativeSessionId: '019c6e27-e55b-73d1-87d8-4e01f1f75043', provider: 'codex', agentVersion: '0.70.0', canResume: true, live: true, status: 'busy', title: 'API contract and integration tests', cwd: HARBOR, projectKey: HARBOR, gitBranch: 'main', lastPrompt: 'Check the API contract and cover the integration paths.', updatedAt: ago(2 * MIN), startedAt: ago(20 * MIN), claudeVersion: undefined }));
+  sessions.push(session({ sessionId: 'gemini:session-demo', nativeSessionId: 'session-demo', provider: 'gemini', canResume: true, live: false, status: 'ended', title: 'Review onboarding copy', cwd: HARBOR, projectKey: HARBOR, gitBranch: 'main', updatedAt: ago(2 * HOUR), startedAt: ago(3 * HOUR), claudeVersion: undefined }));
+  sessions.push(session({ sessionId: 'custom:helper-demo', provider: 'local-helper', canResume: false, live: true, status: 'unknown', statusNote: 'Process is running; this agent does not expose detailed status.', title: 'Local agent: repository index', cwd: HARBOR, projectKey: HARBOR, gitBranch: 'main', updatedAt: ago(MIN), claudeVersion: undefined }));
   const byId: Record<string, ClaudeSession> = {};
   for (const s of sessions) byId[s.sessionId] = s;
   const idsOf = (key: string): string[] => sessions.filter((s) => s.projectKey === key).map((s) => s.sessionId);

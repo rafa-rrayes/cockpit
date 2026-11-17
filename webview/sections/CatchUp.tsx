@@ -193,7 +193,7 @@ export function CatchUp({ onClose }: { onClose(): void }): JSX.Element {
         </header>
         <div class="drawer-body">
           {entries.length === 0 ? (
-            <Empty>Nothing new: no Claude finished or is waiting, and no pull request changed since you last looked.</Empty>
+            <Empty>Nothing new: no agent finished or is waiting, and no pull request changed since you last looked.</Empty>
           ) : (
             <ul class="cu-list">
               {entries.map((e) => (

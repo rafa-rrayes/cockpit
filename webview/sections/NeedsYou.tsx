@@ -6,7 +6,7 @@ import { Icon, type IconName } from '../icons';
 import { Ago, Section } from '../ui';
 
 const kinds: Record<AttentionKind, { icon: IconName; word: string; action: string }> = {
-  session_waiting: { icon: 'person', word: 'Claude is waiting', action: 'Open' },
+  session_waiting: { icon: 'person', word: 'Agent is waiting', action: 'Open' },
   session_uncommitted: { icon: 'file', word: 'Stopped with uncommitted changes', action: 'Open' },
   ci_failed: { icon: 'x', word: 'CI failed', action: 'Open run' },
   pr_changes_requested: { icon: 'pr', word: 'Changes requested', action: 'Open PR' },

@@ -430,6 +430,89 @@ describe('Release and Tag (direct): a commit and a tag on the default branch', (
     expect(read(join(local, '.cockpit', 'roadmap.md'))).toBe('## 0.3.0\n\n- [x] C\n');
   });
 
+  it.each(['changelog edit', 'manifest edit', 'deleted file', 'new lockfile', 'staged edit', 'staged deletion'])('preserves %s made after preparation and refuses the stale release', async (scenario) => {
+    const dir = join(base, `release-race-${scenario.replace(/ /g, '-')}`);
+    makeRepo(dir);
+    const drafted = await draftDirect({ repoRoot: dir, base: 'main', version: '0.2.0', versionFiles: [], date: '2026-11-16', remote: false });
+    if (!drafted.ok) throw new Error(drafted.error);
+    const pkg = read(join(dir, 'package.json'));
+    const changelog = read(join(dir, 'CHANGELOG.md'));
+    if (scenario === 'changelog edit') writeFileSync(join(dir, 'CHANGELOG.md'), `${changelog}\n- Added while confirmation open\n`);
+    if (scenario === 'manifest edit') writeFileSync(join(dir, 'package.json'), pkg.replace('"name": "app"', '"name": "new name"'));
+    if (scenario === 'deleted file') rmSync(join(dir, 'CHANGELOG.md'));
+    if (scenario === 'new lockfile') writeFileSync(join(dir, 'package-lock.json'), '{"version":"0.1.0","lockfileVersion":3}\n');
+    if (scenario === 'staged edit') {
+      writeFileSync(join(dir, 'CHANGELOG.md'), `${changelog}\n- Staged while confirmation open\n`);
+      sh(dir, ['add', 'CHANGELOG.md']);
+      // Even when the working file has its original bytes, the user's staged edit must survive.
+      writeFileSync(join(dir, 'CHANGELOG.md'), changelog);
+    }
+    if (scenario === 'staged deletion') {
+      sh(dir, ['rm', '--quiet', 'CHANGELOG.md']);
+      writeFileSync(join(dir, 'CHANGELOG.md'), changelog);
+    }
+    const paths = ['package.json', 'CHANGELOG.md', 'package-lock.json'];
+    const beforeFiles = paths.map((p) => existsSync(join(dir, p)) ? read(join(dir, p)) : undefined);
+    const beforeStatus = status(dir);
+    const beforeIndex = sh(dir, ['ls-files', '--stage', '-z']);
+    const beforeHead = sh(dir, ['rev-parse', 'HEAD']);
+
+    const out = await commitRelease(drafted.draft, { push: false });
+    expect(out).toMatchObject({ ok: false, done: [] });
+    expect(out.error).toMatch(/since the release was prepared.*Nothing was overwritten/);
+    expect(paths.map((p) => existsSync(join(dir, p)) ? read(join(dir, p)) : undefined)).toEqual(beforeFiles);
+    expect(sh(dir, ['ls-files', '--stage', '-z'])).toBe(beforeIndex);
+    expect(status(dir)).toBe(beforeStatus);
+    expect(sh(dir, ['rev-parse', 'HEAD'])).toBe(beforeHead);
+    expect(sh(dir, ['tag', '--list', 'v0.2.0']).trim()).toBe('');
+    expect(existsSync(join(dir, '.git', 'cockpit-release.lock'))).toBe(false);
+  });
+
+  it('rechecks the board snapshot inside the release lock', async () => {
+    const dir = join(base, 'release-board-race');
+    makeRepo(dir, BOARD);
+    const drafted = await draftDirect({ repoRoot: dir, base: 'main', version: '0.2.0', versionFiles: [], date: '2026-11-16', remote: false });
+    if (!drafted.ok) throw new Error(drafted.error);
+    const newer = `${BOARD}\n- [ ] Added during confirmation\n`;
+    writeFileSync(join(dir, 'ROADMAP.md'), newer);
+    const out = await commitRelease(drafted.draft, { roadmap: { path: 'ROADMAP.md', text: change(setLaneStatus(BOARD, '0.2.0', 'shipped')), originalText: BOARD }, push: false });
+    expect(out).toEqual({ ok: false, done: [], error: 'ROADMAP.md changed since the release was prepared: release again. Nothing was overwritten.' });
+    expect(read(join(dir, 'ROADMAP.md'))).toBe(newer);
+    expect(read(join(dir, 'package.json'))).toContain('"version": "0.1.0"');
+    expect(sh(dir, ['tag', '--list', 'v0.2.0']).trim()).toBe('');
+  });
+
+  it('allows only one concurrent direct release to mutate the repository', async () => {
+    const dir = join(base, 'release-concurrent');
+    makeRepo(dir);
+    const drafted = await draftDirect({ repoRoot: dir, base: 'main', version: '0.2.0', versionFiles: [], date: '2026-11-16', remote: false });
+    if (!drafted.ok) throw new Error(drafted.error);
+    const results = await Promise.all([commitRelease(drafted.draft, { push: false }), commitRelease(drafted.draft, { push: false })]);
+    expect(results.filter((r) => r.ok)).toHaveLength(1);
+    expect(results.filter((r) => !r.ok)).toHaveLength(1);
+    expect(sh(dir, ['rev-list', '--count', 'HEAD']).trim()).toBe('2');
+    expect(sh(dir, ['rev-parse', 'v0.2.0^{commit}'])).toBe(sh(dir, ['rev-parse', 'HEAD']));
+    expect(status(dir)).toBe('');
+    expect(existsSync(join(dir, '.git', 'cockpit-release.lock'))).toBe(false);
+  });
+
+  it('keeps newer edits made by a failing commit hook rather than rolling them back', async () => {
+    const dir = join(base, 'release-hook-edit');
+    makeRepo(dir);
+    const drafted = await draftDirect({ repoRoot: dir, base: 'main', version: '0.2.0', versionFiles: [], date: '2026-11-16', remote: false });
+    if (!drafted.ok) throw new Error(drafted.error);
+    const hooks = join(dir, '.git', 'hooks');
+    writeFileSync(join(hooks, 'pre-commit'), '#!/bin/sh\nprintf "\\n- Newer hook edit\\n" >> CHANGELOG.md\nexit 1\n', { mode: 0o755 });
+    sh(dir, ['config', 'core.hooksPath', hooks]);
+    const out = await commitRelease(drafted.draft, { push: false });
+    expect(out).toMatchObject({ ok: false, done: [] });
+    expect(out.error).toContain('Newer file edits were kept');
+    expect(read(join(dir, 'CHANGELOG.md'))).toContain('- Newer hook edit');
+    expect(read(join(dir, 'package.json'))).toContain('"version": "0.1.0"');
+    expect(sh(dir, ['tag', '--list', 'v0.2.0']).trim()).toBe('');
+    expect(existsSync(join(dir, '.git', 'cockpit-release.lock'))).toBe(false);
+  });
+
   it('tags the default branch tip for a shipped lane, here only or pushed too', async () => {
     const found = await findDirectTag(local, 'main', '0.3.1', false);
     expect(found).toEqual({ ok: true, sha: sh(local, ['rev-parse', 'main']).trim() });

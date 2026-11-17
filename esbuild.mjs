@@ -15,6 +15,7 @@ const builds = [
   { ...common, entryPoints: ['webview/dev.ts'], outfile: 'dist/dev.js', platform: 'browser', format: 'iife', target: 'es2022' },
   { ...common, entryPoints: ['scripts/dump-state.ts'], outfile: 'dist/dump-state.js', platform: 'node', format: 'cjs', target: 'node20' },
   { ...common, entryPoints: ['src/cli.ts'], outfile: 'dist/cockpit.js', platform: 'node', format: 'cjs', target: 'node20' },
+  { ...common, entryPoints: ['src/runner.ts'], outfile: 'dist/runner.js', platform: 'node', format: 'cjs', target: 'node20' },
 ];
 
 const copyStatic = () => copyFileSync('webview/dev.html', 'dist/dev.html');

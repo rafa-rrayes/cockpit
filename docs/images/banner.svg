@@ -32,13 +32,13 @@
 
   <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
     <text x="440" y="150" fill="#ffffff" font-size="84" font-weight="700" letter-spacing="-2">Cockpit</text>
-    <text x="444" y="200" fill="#c7d5e4" font-size="27">Every Claude Code session, your branches, PRs, CI and</text>
+    <text x="444" y="200" fill="#c7d5e4" font-size="27">Your coding agents, branches, pull requests, CI and</text>
     <text x="444" y="236" fill="#c7d5e4" font-size="27">roadmap — one live view in place of the editor.</text>
     <g font-size="17" font-weight="600">
       <rect x="444" y="262" width="118" height="30" rx="15" fill="#4daafc" fill-opacity="0.16" stroke="#4daafc" stroke-opacity="0.5"/>
       <text x="503" y="282" fill="#8cc8ff" text-anchor="middle">VS Code</text>
       <rect x="574" y="262" width="138" height="30" rx="15" fill="#89d185" fill-opacity="0.14" stroke="#89d185" stroke-opacity="0.5"/>
-      <text x="643" y="282" fill="#aee3aa" text-anchor="middle">Claude Code</text>
+      <text x="643" y="282" fill="#aee3aa" text-anchor="middle">AI agents</text>
       <rect x="724" y="262" width="134" height="30" rx="15" fill="#e8b54a" fill-opacity="0.14" stroke="#e8b54a" stroke-opacity="0.5"/>
       <text x="791" y="282" fill="#f3d38f" text-anchor="middle">git · GitHub</text>
     </g>

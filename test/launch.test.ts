@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { defaultLaunch, launchArgs, launchEnv, launchPrompt, parseLaunchOptions, sessionName, worktreeName } from '../src/launch';
+import { agentLaunchArgs, defaultLaunch, launchArgs, launchEnv, launchPrompt, parseLaunchOptions, sessionName, worktreeName } from '../src/launch';
 import type { LaunchOptions } from '../src/model';
+import { providerFor } from '../src/providers';
 
 const card = (text: string, lane = 'Backlog') => ({ text, lane });
 
@@ -116,5 +117,28 @@ describe('the subagent model', () => {
   it('is named in the prompt', () => {
     expect(launchPrompt([{ text: 'x', lane: 'Backlog' }], opts({ subagents: 2, subagentModel: 'haiku' }), 'shop')).toContain('Every subagent runs on Haiku');
     expect(launchPrompt([{ text: 'x', lane: 'Backlog' }], opts({ subagents: 2 }), 'shop')).not.toContain('Every subagent runs on');
+  });
+});
+
+describe('provider launch options', () => {
+  it('accepts provider-specific model identifiers while retaining legacy Claude validation', () => {
+    expect(parseLaunchOptions({ ...defaultLaunch, agent: 'codex', model: 'gpt-6.1-sol' })).toEqual({ ...defaultLaunch, agent: 'codex', model: 'gpt-6.1-sol' });
+    expect(parseLaunchOptions({ ...defaultLaunch, agent: 'opencode', model: 'provider/model' })?.model).toBe('provider/model');
+    expect(parseLaunchOptions({ ...defaultLaunch, agent: 'custom-helper', model: 'local:model' })?.agent).toBe('custom-helper');
+    expect(parseLaunchOptions({ ...defaultLaunch, agent: '../bad' })).toBeUndefined();
+    expect(parseLaunchOptions({ ...defaultLaunch, agent: 'codex', model: '--flag' })).toBeUndefined();
+  });
+  it('does not leak Claude-specific subagent environment into another provider', () => {
+    expect(launchEnv({ ...defaultLaunch, agent: 'codex', subagents: 2, subagentModel: 'sonnet' })).toEqual({});
+  });
+});
+
+
+describe('non-Claude launch argv', () => {
+  it('passes Codex effort and model without Claude flags or an invented worktree argument', () => {
+    expect(agentLaunchArgs(providerFor('codex')!, 'a prompt; still one arg', { ...defaultLaunch, agent: 'codex', model: 'gpt-6.1-sol', effort: 'max' })).toEqual(['-c', 'model_reasoning_effort="xhigh"', '--model', 'gpt-6.1-sol', '--', 'a prompt; still one arg']);
+  });
+  it('does not send unsupported thinking controls to Gemini or custom agents', () => {
+    expect(agentLaunchArgs(providerFor('gemini')!, 'task', { ...defaultLaunch, agent: 'gemini', effort: 'max' })).toEqual(['--prompt-interactive', 'task']);
   });
 });

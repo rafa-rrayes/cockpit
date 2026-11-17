@@ -1,17 +1,17 @@
 <p align="center">
-  <img src="docs/images/banner.svg" alt="Cockpit — every Claude Code session, your branches, PRs, CI and roadmap in one live view" width="100%">
+  <img src="docs/images/banner.png" alt="Cockpit — your coding agents, branches, PRs, CI and roadmap in one live view" width="100%">
 </p>
 
 <p align="center">
   <a href="https://github.com/rafa-rrayes/cockpit/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/rafa-rrayes/cockpit?style=flat-square&color=4daafc"></a>
   <img alt="VS Code 1.100+" src="https://img.shields.io/badge/VS%20Code-1.100%2B-007ACC?style=flat-square&logo=visualstudiocode&logoColor=white">
-  <img alt="Built for Claude Code" src="https://img.shields.io/badge/built%20for-Claude%20Code-D97757?style=flat-square&logo=anthropic&logoColor=white">
+  <img alt="Multiple coding agents" src="https://img.shields.io/badge/agents-Claude%20%C2%B7%20Codex%20%C2%B7%20more-89d185?style=flat-square">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-Preact-3178C6?style=flat-square&logo=typescript&logoColor=white">
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/rafa-rrayes/cockpit?style=flat-square&color=89d185"></a>
 </p>
 
 <p align="center">
-  <b>Running five Claudes at once? Cockpit tells you which one needs you, what each one finished,<br>
+  <b>Running several coding agents at once? Cockpit tells you which one needs you, what each one finished,<br>
   and ships their branches — without leaving VS Code.</b>
 </p>
 
@@ -29,27 +29,28 @@
 
 ## Why
 
-Claude Code makes it easy to have several sessions going at once — in worktrees, in terminals, across projects. Keeping
+Coding agents make it easy to have several sessions going at once — in worktrees, in terminals, across projects. Keeping
 track of them is the hard part: which one is stuck on a permission prompt, which one finished an hour ago with
 uncommitted files, which branch is ready to merge, and whether CI on `main` just went red.
 
-Cockpit is a VS Code tab that answers all of that at a glance. It reads Claude Code's local session files, your git
-repository and (optionally) GitHub through `gh`, and turns them into one live page — with the actions to act on it.
+Cockpit is a VS Code tab that answers all of that at a glance. It combines native agent session readers, portable process tracking, your git
+repository and (optionally) GitHub through `gh` in one page — with the actions to act on it.
+Claude Code, Codex, Gemini CLI and OpenCode have built-in discovery. Launch presets and custom commands cover other terminal agents; see [Agent support](#agent-support) for capabilities.
 
 ## Highlights
 
 |  |  |
 | :-- | :-- |
-| 🚨 **Needs you** — Claudes waiting on a prompt, red CI on `main`, PRs with changes requested, stopped work with uncommitted files. | 🤖 **Claudes** — a live card per session across every project: status, branch, last prompt, subagents and workflow runs. |
-| 📬 **Catch up** — what each Claude finished since you last looked, with its report and the one next action (Ship, Resume, Open PR). | 🗺️ **Roadmap** — a drag-and-drop kanban backed by a plain Markdown file, with a lane per release. Start a Claude on any card. |
+| 🚨 **Needs you** — Agents waiting on a prompt, red CI on `main`, PRs with changes requested, stopped work with uncommitted files. | 🤖 **Agents** — a live card per session across every project: status, branch, last prompt, subagents and workflow runs. |
+| 📬 **Catch up** — what each agent finished since you last looked, with its report and the one next action (Ship, Resume, Open PR). | 🗺️ **Roadmap** — a drag-and-drop kanban backed by a plain Markdown file, with a lane per release. Start your chosen agent on any card. |
 | 🌿 **Work** — branches and worktrees as a board (In progress / Merged / Stale), PR and check status, safe **Clean merged…**. | 🚀 **Ship & release** — merge, open PRs, bump versions, date the changelog and tag, locally or via GitHub, always after a confirmation. |
 
 ## Screenshots
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/catchup.png" alt="Catch up panel"><br><sub><b>Catch up</b> — each finished Claude's report, its branch and the next action.</sub></td>
-    <td width="50%"><img src="docs/images/detail.png" alt="Claude session details"><br><sub><b>Session details</b> — recent prompts, folder, branch, transcript; resume or focus its terminal.</sub></td>
+    <td width="50%"><img src="docs/images/catchup.png" alt="Catch up panel"><br><sub><b>Catch up</b> — each finished agent's report, its branch and the next action.</sub></td>
+    <td width="50%"><img src="docs/images/detail.png" alt="Agent session details"><br><sub><b>Session details</b> — recent prompts, folder, branch, transcript; resume or focus its terminal.</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/images/roadmap.png" alt="Roadmap board"><br><sub><b>Roadmap</b> — lanes per release, cards linked to branches and PRs, Release and Tag buttons.</sub></td>
@@ -69,36 +70,88 @@ repository and (optionally) GitHub through `gh`, and turns them into one live pa
 2. Install it: `code --install-extension cockpit-<version>.vsix`, then reload the window.
 3. Open a git repository and run **Cockpit: Open** — or click the gauge icon in the activity bar.
 
-Requirements: VS Code 1.100+, `git` on the PATH, and [Claude Code](https://claude.com/claude-code) sessions on this
-machine. The [GitHub CLI](https://cli.github.com) (`gh`, logged in) is optional and adds pull requests and CI.
+Requirements: VS Code 1.100+, `git` on the PATH, and an installed coding agent (Claude Code, Codex or another provider below). The [GitHub CLI](https://cli.github.com) (`gh`, logged in) is optional and adds pull requests and CI.
+
+## Agent support
+
+Choose the provider in **Start agent…** on any roadmap card, or set `cockpit.launch.agent`. Each session shows its provider; the Agents filter can narrow the view to one tool. **Resume** routes to that provider using its original session ID.
+
+| Agent | Discovery and activity | Launch / resume |
+| :-- | :-- | :-- |
+| Claude Code | Native sessions, process identity, prompts, reports, subagents and workflows | Both |
+| Codex | Local history plus read-only runtime status from an already-running local app server when available | Both |
+| Gemini CLI | Saved sessions, prompts and reports; process tracking for launches through Cockpit | Both |
+| OpenCode | Saved session metadata through its local CLI; process tracking for launches through Cockpit | Both |
+| Cursor Agent | Process tracking for launches through Cockpit | Launch; resume after a hook supplies its native session ID |
+| Aider | Process tracking for launches through Cockpit | Single-task launch |
+| Any other terminal agent | Portable process tracking and optional activity/report hooks | Custom launch; optional configured resume |
+
+A saved transcript is **not** evidence of a running process. When runtime data is unavailable, Cockpit says **Unknown** and explains the limitation. It never guesses that a recent transcript is busy or waiting. Claude-specific subagent model controls appear only for Claude; other providers can use their own model names. Non-Claude worktrees are created by Cockpit before launch, without relying on vendor-specific worktree flags.
+
+### Add another agent
+
+Add a command in your user settings (`cockpit.agents.custom`), then select it in the launcher:
+
+```json
+{
+  "cockpit.agents.custom": [
+    {
+      "id": "my-agent",
+      "label": "My agent",
+      "command": "/absolute/path/to/my-agent",
+      "args": ["--prompt", "{prompt}"],
+      "resumeArgs": ["resume", "{sessionId}"]
+    }
+  ]
+}
+```
+
+`command` is an executable, and `args` are separate arguments; Cockpit does not interpret shell command strings. Supported placeholders are `{prompt}`, `{model}` and `{sessionId}`. Omit `resumeArgs` for agents without resume support. Custom commands are configured in user settings rather than auto-installed from a repository.
+
+To track a command you start yourself, run:
+
+```sh
+cockpit run my-agent -- /absolute/path/to/my-agent --some-option
+```
+
+The wrapper records process start/exit in `~/.cockpit/sessions/` (`COCKPIT_HOME` overrides the parent directory). It preserves terminal input/output and the agent's own permissions. Unknown activity is shown until a tool hook or the agent explicitly reports it:
+
+```sh
+cockpit session busy
+cockpit session waiting "Permission required"
+cockpit session idle
+cockpit session id original-session-id
+cockpit session report "Implemented the change; all tests passed."
+```
+
+These commands update only the session manifest passed through `COCKPIT_SESSION_FILE`. They work outside git and without an open VS Code window. The existing `cockpit status`, `ship`, `release`, `tag`, `pull`, `add` and `lane` commands remain available to every agent.
 
 ## What's on the page
 
-Cockpit takes over the editor area with a live, interactive overview of the project and of every Claude Code session
-on this machine:
+Cockpit takes over the editor area with a live, interactive overview of the project and of the agent sessions it discovers on this machine:
 
-- **Needs you**: Claudes waiting on a permission prompt or a question, a failed CI run on the default branch,
-  pull requests with changes requested, and a Claude that stopped (idle or ended) with uncommitted files in its
+- **Needs you**: Agents waiting on a permission prompt or a question, a failed CI run on the default branch,
+  pull requests with changes requested, and an agent that stopped (idle or ended) with uncommitted files in its
   worktree. The count also shows on the status-bar item and the activity-bar icon.
-- **Catch up** (top bar, with a count): what changed since you last closed it. Each Claude of this project that
+- **Catch up** (top bar, with a count): what changed since you last closed it. Each agent of this project that
   finished or is waiting, newest first, one per branch: its branch, how many commits ahead and the last subject, the
   uncommitted files, its pull request, its roadmap cards and its last answer (the report), with one next action:
   **Ship…**, **Resume**, **Focus terminal**, **Open #n** or **Details**. Then the pull requests whose checks passed or
-  failed, or that merged (**Pull main**). Closing it counts all of it as seen, except a Claude whose
+  failed, or that merged (**Pull main**). Closing it counts all of it as seen, except an agent whose
   branch is still to ship or whose uncommitted work is still to resume: those stay until it is done; the first time, it covers the last
   day. Under a report's "still open" list, **Add as card** puts an item in the session's lane.
-- **Claudes**: one card per session (busy, waiting, idle, or ended in the last days), grouped by project with this
+- **Agents**: one card per session (busy, waiting, idle, or ended in the last days), grouped by project with this
   window's project first. Each card shows the title, branch, last prompt, subagents and workflow runs. Click a card
   for the details: recent prompts, workflow phases, subagents, and the actions **Resume** (a new terminal running
-  `claude --resume <id>` in the session's folder), **Focus terminal** (when it runs in a terminal of this window),
+  the original provider's resume command in the session's folder, when supported), **Focus terminal** (when it runs in a terminal of this window),
   **Open worktree**, **Open transcript** and **Copy ID**.
 - **Work**: branches and worktrees as a board (In progress, Merged, Stale) with uncommitted files, ahead/behind,
-  the pull request and its checks, and the Claudes working there. Below that, the latest CI runs. The header shows
+  the pull request and its checks, and the agents working there. Below that, the latest CI runs. The header shows
   how this repository delivers (`direct · local`, `direct · origin` or `pull requests · owner/repo`, see
   [Delivery](#delivery-ship-and-release)), and a branch with commits that cannot be finished yet keeps its button,
   disabled, with the reason under it.
   **Clean merged…** lists the merged worktrees and branches it would remove and does nothing until you confirm.
-  It leaves out anything a live Claude or a running subagent works in, a locked worktree, and a folder open in
+  It leaves out anything a known live agent or a running subagent works in, a locked worktree, and a folder open in
   any VS Code window. After you confirm it checks again, then for each branch verifies with
   `git merge-base --is-ancestor` that its commits are all in the default branch (local or `origin` copy), runs
   `git worktree remove` (never `--force`, so a worktree with uncommitted or untracked files is kept; ignored files
@@ -111,31 +164,30 @@ on this machine:
   sits under each lane's Planned column, and **Release** adds a lane. A lane's header shows how many of its cards
   are done. The board is a plain file, `.cockpit/roadmap.md` (see [The `.cockpit/` folder](#the-cockpit-folder)):
   every edit changes only its own lines in that file, through VS Code's editor, so undo works there and the file
-  stays one you (and any Claude) can edit by hand. With no board yet, the section offers to create one.
-  **Start Claude…**, in a card's right-click menu, opens a terminal running `claude` on that card. Cmd-click
-  (Ctrl-click) selects more cards, in any lane, to start one Claude on them as a batch. The launcher picks the model
-  and the thinking effort (low to max); drag the thinking slider down, or click the handle under it, for a second
+  stays one you (and any agent) can edit by hand. With no board yet, the section offers to create one.
+  **Start agent…**, in a card's right-click menu, opens a terminal running the selected provider on that card. Cmd-click
+  (Ctrl-click) selects more cards, in any lane, to start one agent on them as a batch. The launcher picks the agent and model, and exposes supported controls. For Claude Code, it picks thinking effort (low to max); drag the thinking slider down, or click the handle under it, for a second
   slider with up to 8 subagents, and pull that one down for the model every subagent runs on (Auto leaves it to
-  Claude Code; a model is forced with `CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`). The Claude gets a standard
-  prompt (follow CLAUDE.md and the lessons, keep the change small, prove it with the tests, update the changelog,
+  Claude Code; a model is forced with `CLAUDE_CODE_SUBAGENT_MODEL` and `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`). The agent gets a standard
+  prompt (follow AGENTS.md, CLAUDE.md, GEMINI.md and the lessons, keep the change small, prove it with the tests, update the changelog,
   commit on its branch, and ship or release through the `cockpit` command, not by hand with git), runs in a
   worktree of its own unless you untick it, and its planned cards
   move to In progress. The worktree is named after the lane and the card (`1.5.0-welcome-link-lifetime`,
-  `backlog-tablet-layout`), Claude Code makes its branch `worktree-<name>`, and the cards are linked to that branch:
+  `backlog-tablet-layout`), the session uses branch `worktree-<name>`, and the cards are linked to that branch:
   each shows the branch and its pull request, and, once the branch can be finished, the button that finishes it.
 - **Ship, release, tag** (see [Delivery](#delivery-ship-and-release)): a finished branch gets **Merge into main…**
   or **Ship…** (in Work, in Catch up and on its card), and a lane whose cards are all done gets **Release X…**.
   What they do follows the repository: with no remote they merge, commit and tag here; with an `origin` they go
   through pull requests. Each asks first, in a dialog that shows what it will do.
-- **For Claudes too**: the [`cockpit` command](#the-cockpit-command), in every terminal of the window, runs the
-  same actions, so a Claude can finish its own work when you ask it to.
+- **For agents too**: the [`cockpit` command](#the-cockpit-command), in every terminal of the window, runs the
+  same actions, so an agent can finish its own work when you ask it to.
 - **Releases**: the current version, the latest tag and the commits since it, and the changelog's Unreleased
   lines.
 - **Activity**: commits, session starts and ends, CI runs and pull requests, newest first.
 
 Cockpit only reads, except when you act: **Clean merged…**; the roadmap board, which writes its own file; and the
 finish, **Release…**, **Tag…** and **Pull** actions, which change git (and GitHub) after a confirmation. **Start
-Claude…** only opens a terminal: the Claude in it works under its own permission prompts. A Claude's last answer
+agent…** creates a worktree when selected and opens a terminal; the agent works under its own permission prompts. An agent's last answer
 goes into a pull request's body only when you Ship; otherwise transcripts never leave the machine. The network
 calls are `gh` commands, made with your existing GitHub CLI login, and the `git fetch`/`push`/`pull` of those
 actions, to `origin`.
@@ -215,9 +267,11 @@ or merged, and no Claude working on it (the Claude that runs `cockpit ship` on i
 
 Branches keep their `worktree-` name when pushed, so the local and remote names match.
 
+Direct releases retain a snapshot of every file they read, including files that did not yet exist, and the corresponding staged index entries. After confirmation, any changed input causes a refusal before files are written. Concurrent Cockpit releases share a repository lock. A failed commit restores only files that still match Cockpit's own edits, preserving newer hook/editor writes.
+
 ## The `cockpit` command
 
-Cockpit puts `cockpit` on the PATH of every terminal of its window, so a Claude working there can ask Cockpit to do
+Cockpit puts `cockpit` on the PATH of every terminal of its window, so an agent working there can ask Cockpit to do
 what the buttons do:
 
     cockpit status                    what the board shows and what can be done next
@@ -229,14 +283,14 @@ what the buttons do:
     cockpit lane <version> [title…]   add a release lane
 
 It works from any worktree: the request goes through `.cockpit/inbox/` to the VS Code window open on the
-repository, which runs it and answers. So a Claude kept inside its own worktree can still have its branch merged
-in the main checkout. Local steps (a merge, a release commit, a local tag) run at once, since the Claude's own
+repository, which runs it and answers. So an agent kept inside its own worktree can still have its branch merged
+in the main checkout. Local steps (a merge, a release commit, a local tag) run at once, since the agent's own
 permission prompt for the command is the confirmation; anything that pushes or opens a pull request shows the
 dialog in VS Code first. It exits 0 when done, 1 when refused (with the reason), 2 when no window with Cockpit is
 open on the repository. It needs `node` on the PATH.
 
-**Tell your Claudes.** A Claude started from the board is told about the command in its prompt. For the others, add
-a line to the project's `CLAUDE.md` (the copy button under the Roadmap header gives it):
+**Tell your agents.** An agent started from the board is told about the command in its prompt. For the others, add
+a line to the project's `AGENTS.md`, `CLAUDE.md` or `GEMINI.md` (the copy button under the Roadmap header gives it):
 
     To ship, merge or release, don't use git by hand: run `cockpit status`, then `cockpit ship` or `cockpit release <version>`.
 
@@ -285,22 +339,24 @@ written to your user settings, and **All settings…** opens them in VS Code's S
 | Setting | Default | |
 |---|---|---|
 | `cockpit.openOnStartup` | `true` | Open Cockpit as the first, pinned tab when a window starts. |
-| `cockpit.claudes.showAllProjects` | `true` | Show the Claudes of every project. Off: only this window's project. |
-| `cockpit.endedSessionDays` | `7` | How many days of ended Claude sessions to show. |
+| `cockpit.claudes.showAllProjects` | `true` | Show the agents of every project. Off: only this window's project. |
+| `cockpit.endedSessionDays` | `7` | How many days of saved/ended agent sessions to show. |
 | `cockpit.githubPollSeconds` | `60` | How often to ask GitHub (through `gh`) while Cockpit is visible. The minimum is 15. |
 | `cockpit.hiddenSections` | `[]` | Sections to leave out: `needs`, `claudes`, `roadmap`, `work`, `releases`, `activity`. |
-| `cockpit.launch.model` | `default` | The model **Start Claude…** opens with (`default`, `fable`, `opus`, `sonnet`, `haiku`). |
+| `cockpit.launch.agent` | `claude` | Default provider: `claude`, `codex`, `gemini`, `opencode`, `cursor`, `aider` or a configured custom ID. |
+| `cockpit.agents.custom` | `[]` | User-defined executable/argument templates; edit as JSON through All settings. |
+| `cockpit.launch.model` | `default` | The model **Start agent…** opens with; `default` uses the provider default. Claude aliases and other providers' model IDs are accepted. |
 | `cockpit.launch.effort` | `high` | The thinking effort it opens with (`low` … `max`). |
 | `cockpit.launch.subagents` | `0` | Up to how many subagents (0 … 8). |
 | `cockpit.launch.subagentModel` | `auto` | The model the subagents run on. |
-| `cockpit.launch.worktree` | `true` | Start the Claude in a worktree of its own. |
+| `cockpit.launch.worktree` | `true` | Start the agent in a worktree of its own. |
 | `cockpit.launch.markDoing` | `true` | Move planned cards to In progress. |
-| `cockpit.promptSteps` | `[]` | The steps of the prompt a Claude started from the board works by. Empty: the standard steps. The steps that follow from the launcher's options (worktree or main checkout, committing, subagents) are always added. |
+| `cockpit.promptSteps` | `[]` | The steps of the prompt an agent started from the board works by. Empty: the standard steps. The steps that follow from the launcher's options (worktree or main checkout, committing, subagents) are always added. |
 | `cockpit.members` | `[]` | Team members for every project (`name`, `color` as `#rrggbb`). Roadmap cards can be assigned to them. Only for organizing. |
 | `cockpit.projectMembers` | `[]` | Team members of this project only, read from the workspace settings; one with a global member's name replaces it. |
-| `cockpit.release.versionFiles` | `[]` | Files whose version **Release…** bumps besides the root `package.json`, as paths from the repository root (e.g. `pyproject.toml`). In each, the first `"version"` key (JSON) or the first standalone current version is replaced. `package-lock.json` is not bumped. |
+| `cockpit.release.versionFiles` | `[]` | Files whose version **Release…** bumps besides the root `package.json`, as paths from the repository root (e.g. `pyproject.toml`). In each, the first `"version"` key (JSON) or the first standalone current version is replaced. `package-lock.json` is bumped automatically with the root package version. |
 
-The launcher opens with the options the last Claude was started with, until a default is changed in the popover.
+The launcher opens with the options the last agent was started with, until a default is changed in the popover.
 
 Claude Code's directory is `$CLAUDE_CONFIG_DIR` when that is set (as Claude Code itself does), otherwise
 `~/.claude`.
@@ -308,16 +364,21 @@ Claude Code's directory is `$CLAUDE_CONFIG_DIR` when that is set (as Claude Code
 ## Privacy
 
 Cockpit has no server, account, analytics or telemetry, and the extension contains no code that makes HTTP requests of
-its own. Everything it reads is local: Claude Code's session files under `~/.claude` (or `$CLAUDE_CONFIG_DIR`), your
-git repository and its release files. Those transcripts can contain anything you told Claude, so they are parsed in
-memory to build the page and are never copied elsewhere.
+its own. Everything it reads is local: Claude Code's session files under `~/.claude` (or `$CLAUDE_CONFIG_DIR`), the
+other agents' local histories (see [What it reads](#what-it-reads)), your git repository and its release files. Those
+transcripts can contain anything you told an agent, so they are parsed in memory to build the page and are never copied
+elsewhere. Codex's live status comes from its already-running app server, over a local socket.
 
 The only traffic that leaves your machine is what you already trust `git` and `gh` with: read-only `gh` queries for
 pull requests and CI (skipped if `gh` is missing or logged out), and, after a confirmation, the `git push`/`pull`
-and `gh pr create` of Ship, Release, Tag and Pull. A Claude's last answer goes into a pull request body only when you
+and `gh pr create` of Ship, Release, Tag and Pull. An agent's last answer goes into a pull request body only when you
 Ship. Nothing else is sent.
 
 ## What it reads
+
+**Agent adapters.** Codex reads bounded local session history from `$CODEX_HOME` (default `~/.codex`) and queries an already-running local app server for runtime status when available. It does not start turns. Gemini reads saved chats beneath `~/.gemini/tmp/`, resolving project folders through their markers or registry. OpenCode uses its read-only local session-list command, with a 60-second cache. These histories stay on this machine; discovery does not invoke a model. `COCKPIT_GEMINI_DIR` and `COCKPIT_OPENCODE_COMMAND` override those two reader locations/commands.
+
+**Portable process records.** `~/.cockpit/sessions/` contains launches made through Cockpit or `cockpit run`, with process identity and explicit activity hooks. It does not capture terminal output. Native readers and process records merge when they share an explicit provider/native session ID; unrelated sessions in the same folder stay separate.
 
 **Claude Code's own files, which are undocumented internals.** These are `~/.claude/sessions/<pid>.json` (live
 sessions), `~/.claude/projects/<slug>/<sessionId>.jsonl` (transcripts, read from the end), and the subagent and

@@ -31,6 +31,10 @@ export const USAGE = `Usage: cockpit <command>
   cockpit pull                      pr delivery: bring the default branch up to date
   cockpit add <lane> <text…>        add a card
   cockpit lane <version> [title…]   add a release lane
+  cockpit run <agent> -- <command> [args…]   monitor any terminal agent
+  cockpit session <busy|waiting|idle|unknown> [detail]   report activity from an agent hook
+  cockpit session id <native-id>    link a launched process to its native session
+  cockpit session report <text>     attach the agent's completion report
 
 Asks the Cockpit of the VS Code window open on this repository. Exit 0: done, 1: refused, 2: no Cockpit or usage.`;
 

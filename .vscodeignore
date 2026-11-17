@@ -3,6 +3,7 @@
 !dist/webview.js
 !dist/webview.css
 !dist/cockpit.js
+!dist/runner.js
 !bin/**
 !media/**
 !package.json

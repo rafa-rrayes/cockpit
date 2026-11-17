@@ -1,7 +1,7 @@
 {
   "name": "cockpit",
   "displayName": "Cockpit",
-  "description": "A live overview of the project and every Claude Code session, in place of the editor.",
+  "description": "A live overview of your project and coding agents: Claude Code, Codex, Gemini CLI, OpenCode and custom CLIs.",
   "version": "0.3.3",
   "publisher": "rrayes",
   "private": true,
@@ -30,7 +30,10 @@
     "worktree",
     "github",
     "kanban",
-    "roadmap"
+    "roadmap",
+    "codex",
+    "gemini",
+    "opencode"
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
@@ -108,14 +111,14 @@
         "cockpit.claudes.showAllProjects": {
           "type": "boolean",
           "default": true,
-          "description": "Show the Claudes of every project in the Claudes section. Off: only the Claudes of this window's project."
+          "description": "Show agents of every project in the Agents section. Off: only the agents of this window's project."
         },
         "cockpit.endedSessionDays": {
           "type": "number",
           "default": 7,
           "minimum": 0,
           "maximum": 90,
-          "description": "How many days of ended Claude sessions to show."
+          "description": "How many days of ended agent sessions to show."
         },
         "cockpit.githubPollSeconds": {
           "type": "number",
@@ -129,54 +132,80 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "enum": ["needs", "claudes", "roadmap", "work", "releases", "activity"]
+            "enum": [
+              "needs",
+              "claudes",
+              "roadmap",
+              "work",
+              "releases",
+              "activity"
+            ]
           },
           "description": "Sections of the Cockpit page to leave out."
         },
         "cockpit.launch.model": {
           "type": "string",
           "default": "default",
-          "enum": ["default", "fable", "opus", "sonnet", "haiku"],
-          "enumDescriptions": ["Claude Code's own default model", "", "", "", ""],
-          "description": "The model \"Start Claude…\" on roadmap cards opens with."
+          "description": "Model for the selected agent, or default. Claude Code accepts fable, opus, sonnet, haiku. Other agents accept their own model identifiers."
         },
         "cockpit.launch.effort": {
           "type": "string",
           "default": "high",
-          "enum": ["low", "medium", "high", "xhigh", "max"],
-          "description": "How much the Claude thinks (claude --effort): what \"Start Claude…\" opens with."
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "description": "How much the agent thinks (claude --effort): what \"Start agent…\" opens with."
         },
         "cockpit.launch.subagents": {
           "type": "integer",
           "default": 0,
           "minimum": 0,
           "maximum": 8,
-          "description": "Up to how many subagents the Claude may run in parallel: what \"Start Claude…\" opens with. 0: it works alone."
+          "description": "Up to how many subagents the agent may run in parallel: what \"Start agent…\" opens with. 0: it works alone."
         },
         "cockpit.launch.subagentModel": {
           "type": "string",
           "default": "auto",
-          "enum": ["auto", "fable", "opus", "sonnet", "haiku"],
-          "enumDescriptions": ["Claude Code picks", "", "", "", ""],
-          "description": "The model every subagent runs on, when there are subagents: what \"Start Claude…\" opens with."
+          "enum": [
+            "auto",
+            "fable",
+            "opus",
+            "sonnet",
+            "haiku"
+          ],
+          "enumDescriptions": [
+            "Claude Code picks",
+            "",
+            "",
+            "",
+            ""
+          ],
+          "description": "The model every subagent runs on, when there are subagents: what \"Start agent…\" opens with."
         },
         "cockpit.launch.worktree": {
           "type": "boolean",
           "default": true,
-          "description": "Start the Claude in a git worktree of its own: what \"Start Claude…\" opens with."
+          "description": "Start the agent in a git worktree of its own: what \"Start agent…\" opens with."
         },
         "cockpit.launch.markDoing": {
           "type": "boolean",
           "default": true,
-          "description": "Move planned cards to \"In progress\" once the Claude starts: what \"Start Claude…\" opens with."
+          "description": "Move planned cards to \"In progress\" once the agent starts: what \"Start agent…\" opens with."
         },
         "cockpit.promptSteps": {
           "type": "array",
           "default": [],
           "maxItems": 30,
-          "items": { "type": "string", "maxLength": 1000 },
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          },
           "scope": "resource",
-          "markdownDescription": "**Per project**: read from the workspace's settings only, never the user's. The steps of the prompt a Claude started from the roadmap works by, one per item. Empty: Cockpit's standard steps. The steps that follow from the launcher's options (worktree or main checkout, committing, subagents) are added to them."
+          "markdownDescription": "**Per project**: read from the workspace's settings only, never the user's. The steps of the prompt an agent started from the roadmap works by, one per item. Empty: Cockpit's standard steps. The steps that follow from the launcher's options (worktree or main checkout, committing, subagents) are added to them."
         },
         "cockpit.members": {
           "type": "array",
@@ -184,10 +213,19 @@
           "maxItems": 30,
           "items": {
             "type": "object",
-            "required": ["name", "color"],
+            "required": [
+              "name",
+              "color"
+            ],
             "properties": {
-              "name": { "type": "string", "maxLength": 40 },
-              "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+              "name": {
+                "type": "string",
+                "maxLength": 40
+              },
+              "color": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$"
+              }
             }
           },
           "markdownDescription": "Team members of every project: roadmap cards can be assigned to them, and an assigned card's accent takes the member's color. Only for organizing."
@@ -198,10 +236,19 @@
           "maxItems": 30,
           "items": {
             "type": "object",
-            "required": ["name", "color"],
+            "required": [
+              "name",
+              "color"
+            ],
             "properties": {
-              "name": { "type": "string", "maxLength": 40 },
-              "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+              "name": {
+                "type": "string",
+                "maxLength": 40
+              },
+              "color": {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$"
+              }
             }
           },
           "scope": "resource",
@@ -212,9 +259,66 @@
           "default": [],
           "maxItems": 20,
           "uniqueItems": true,
-          "items": { "type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./ -]*$", "maxLength": 200 },
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9_./ -]*$",
+            "maxLength": 200
+          },
           "scope": "resource",
           "markdownDescription": "**Per project**: read from the workspace's settings only, never the user's. Files whose version **Release…** bumps, besides the root `package.json`, as paths from the repository root (for example `pyproject.toml`, `Cargo.toml`). In each, the first `\"version\"` key (JSON) or the first standalone current version is replaced."
+        },
+        "cockpit.launch.agent": {
+          "type": "string",
+          "default": "claude",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$",
+          "description": "Default coding agent for roadmap cards: claude, codex, gemini, opencode, aider, cursor, or an id from cockpit.agents.custom."
+        },
+        "cockpit.agents.custom": {
+          "type": "array",
+          "default": [],
+          "maxItems": 20,
+          "scope": "application",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "label",
+              "command",
+              "args"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,39}$"
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60
+              },
+              "command": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 80
+              },
+              "resumeArgs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 80
+              }
+            }
+          },
+          "markdownDescription": "Other coding agent CLIs. `command` is an executable, never shell text. `args` must contain `{prompt}`; optional `resumeArgs` must contain `{sessionId}`. `{model}` expands the selected model. Launched processes appear in Agents; richer status requires native session data or the session bridge. Built-in ids cannot be replaced."
         }
       }
     }
@@ -231,11 +335,13 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/vscode": "~1.100.0",
+    "@types/ws": "^8.18.2",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.0.0",
     "esbuild": "^0.28.0",
     "preact": "^11.2.0",
     "typescript": "^7.0.0",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.0",
+    "ws": "^8.23.0"
   }
 }

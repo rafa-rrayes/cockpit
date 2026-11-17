@@ -75,7 +75,7 @@ describe('removeMerged', () => {
     const items = [item('landed', wt('landed')), item('unmerged', wt('unmerged')), item('plain'), item('busy-now', wt('busy-now'))];
     const { removed, kept } = await removeMerged(repo, items, (i) => i.branch === 'busy-now');
     expect(removed).toEqual(['landed and its worktree', 'plain']);
-    expect(kept).toEqual(['unmerged: has commits main lacks', 'busy-now: in use now (a Claude, a window or a change appeared)']);
+    expect(kept).toEqual(['unmerged: has commits main lacks', 'busy-now: in use now (an agent, a window or a change appeared)']);
     expect(existsSync(wt('landed'))).toBe(false);
     expect(existsSync(wt('unmerged'))).toBe(true);
     expect(existsSync(wt('busy-now'))).toBe(true);

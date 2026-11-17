@@ -5,10 +5,11 @@
 import { EFFORTS, MAX_SUBAGENTS, MODELS, defaultLaunch } from './launch';
 import { isMemberName } from './data/roadmap';
 import type { ClaudeModel, LaunchOptions, Member, SectionId, Settings } from './model';
+import { isModelName, isProviderId, parseCustomAgent, readCustomAgents } from './providers';
 
 export const SECTIONS: { id: SectionId; label: string }[] = [
   { id: 'needs', label: 'Needs you' },
-  { id: 'claudes', label: 'Claudes' },
+  { id: 'claudes', label: 'Agents' },
   { id: 'roadmap', label: 'Roadmap' },
   { id: 'work', label: 'Work' },
   { id: 'releases', label: 'Releases' },
@@ -33,6 +34,7 @@ export const defaultSettings: Settings = {
   releaseVersionFiles: [],
   members: [],
   projectMembers: [],
+  customAgents: [],
 };
 
 /** A path inside the repository, written with "/": no absolute path, no "..", nothing a command line could read as an
@@ -60,7 +62,9 @@ const SETTINGS = {
   endedSessionDays: { stored: 7, ok: (v: unknown) => isInt(v, 0, MAX_ENDED_DAYS) },
   githubPollSeconds: { stored: 60, ok: (v: unknown) => isInt(v, MIN_GITHUB_SECONDS, Number.MAX_SAFE_INTEGER) },
   hiddenSections: { stored: [] as SectionId[], ok: (v: unknown) => Array.isArray(v) && v.every(isSection) },
-  'launch.model': { stored: 'default', ok: (v: unknown) => v === 'default' || isModel(v) },
+  'launch.agent': { stored: 'claude', ok: isProviderId },
+  'agents.custom': { stored: [], ok: (v: unknown) => Array.isArray(v) && v.length <= 20 && v.every((p) => parseCustomAgent(p) !== undefined) && new Set(v.map((p) => p.id)).size === v.length },
+  'launch.model': { stored: 'default', ok: (v: unknown) => v === 'default' || isModelName(v) },
   'launch.effort': { stored: defaultLaunch.effort, ok: (v: unknown) => EFFORTS.includes(v as never) },
   'launch.subagents': { stored: defaultLaunch.subagents, ok: (v: unknown) => isInt(v, 0, MAX_SUBAGENTS) },
   'launch.subagentModel': { stored: 'auto', ok: (v: unknown) => v === 'auto' || isModel(v) },
@@ -158,8 +162,11 @@ export function readSettings(get: (key: SettingKey) => unknown): Settings {
     worktree: read('launch.worktree') as boolean,
     markDoing: read('launch.markDoing') as boolean,
   };
-  if (isModel(model)) launch.model = model;
-  if (isModel(subagentModel) && subagents > 0) launch.subagentModel = subagentModel;
+  const agent = read('launch.agent') as string;
+  if (agent !== 'claude') launch.agent = agent;
+  if (model !== 'default' && (agent === 'claude' ? isModel(model) : isModelName(model))) launch.model = model as string;
+  if (isModel(subagentModel) && subagents > 0 && agent === 'claude') launch.subagentModel = subagentModel;
+  if (agent !== 'claude') launch.subagents = 0;
   return {
     openOnStartup: read('openOnStartup') as boolean,
     showAllProjects: read('claudes.showAllProjects') as boolean,
@@ -171,5 +178,6 @@ export function readSettings(get: (key: SettingKey) => unknown): Settings {
     releaseVersionFiles: readFiles(get('release.versionFiles')),
     members: readMembers(get('members')),
     projectMembers: readMembers(get('projectMembers')),
+    customAgents: readCustomAgents(get('agents.custom')),
   };
 }
